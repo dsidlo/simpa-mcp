@@ -36,11 +36,11 @@ class TestSettingsDefaults:
             s = Settings()
             assert s.embedding_dimensions == 768
 
-    def test_default_llm_provider(self):
-        """Test default LLM provider."""
+    def test_default_llm_model(self):
+        """Test default LLM model."""
         with patch.dict(os.environ, {}, clear=True):
             s = Settings()
-            assert s.llm_provider == "ollama"
+            assert s.llm_model == "ollama/llama3.2"
 
     def test_default_sigmoid_params(self):
         """Test default sigmoid parameters."""
@@ -133,11 +133,6 @@ class TestSettingsValidation:
         """Test embedding provider must be valid."""
         with pytest.raises(ValidationError):
             Settings(embedding_provider="invalid")
-
-    def test_llm_provider_must_be_valid(self):
-        """Test LLM provider must be valid."""
-        with pytest.raises(ValidationError):
-            Settings(llm_provider="invalid")
 
     def test_sigmoid_k_range(self):
         """Test sigmoid k must be positive."""

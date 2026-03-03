@@ -500,13 +500,15 @@ async def project_with_prompts(
 # -----------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def patch_async_session_local(db_session: AsyncSession):
     """Patch AsyncSessionLocal to return the test session for MCP tools.
     
     This allows MCP server tools to use the test database session instead of
-    creating their own, which prevents event loop conflicts.
+    creating their own, which prevents event loop conflicts and session mismatches.
     """
+    from unittest.mock import patch
+    
     class MockSessionContextManager:
         def __init__(self, session):
             self.session = session
@@ -521,5 +523,7 @@ def patch_async_session_local(db_session: AsyncSession):
     def mock_session_local():
         return MockSessionContextManager(db_session)
     
+    # Patch all modules that import AsyncSessionLocal
     with patch("simpa.mcp_server.AsyncSessionLocal", mock_session_local):
-        yield
+        with patch("simpa.db.engine.AsyncSessionLocal", mock_session_local):
+            yield
