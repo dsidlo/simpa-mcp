@@ -341,7 +341,7 @@ async def prompt_with_history(
             prompt_id=prompt.id,
             action_score=score,
             files_modified=[f"file{i}.py"],
-            diffs={"python": [{"file": f"file{i}.py", "diff": "..."}]},
+            diffs={f"file{i}.py": "..."},
         )
         db_session.add(history)
     

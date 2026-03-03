@@ -47,4 +47,10 @@ can help improve the choice of which prompts better apply to the current project
 - Ensure that tests are comprehensive and cover edge cases.
 
 - Cycle through test -- fix action until all tests are passing and dt-reviewer is satisfied with tests and programs as they are.
-- 
+
+## Docker Testing
+
+- Create tests to build and run the docker server.
+- Create tests to test the simpa-mcp server and its endpoints via the running docker service.
+
+
