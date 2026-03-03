@@ -59,6 +59,44 @@ flowchart TB
 | **🛡️ Security** | PII detection and input validation built-in |
 | **🧪 Tested** | 274 automated tests with 100% pass rate |
 
+## 📋 Prerequisites
+
+Before installing SIMPA, ensure you have the following:
+
+### Required
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| **Python** | 3.10+ | Runtime environment |
+| **PostgreSQL** | 14+ | Database with pgvector extension |
+| **Docker** | Latest | For TestContainers (testing) & PostgreSQL |
+| **Git** | Latest | Clone repository |
+
+### For Ollama (Local Models - Recommended)
+
+| Component | Purpose |
+|-----------|---------|
+| **Ollama** | Local LLM & embedding inference |
+| **nomic-embed-text** | Embedding model (pull via `ollama pull nomic-embed-text`) |
+| **llama3.2** | LLM for prompt refinement (pull via `ollama pull llama3.2`) |
+
+### For Cloud Providers (Optional)
+
+- **OpenAI API Key** - Get from [platform.openai.com](https://platform.openai.com)
+- **Anthropic API Key** - Get from [console.anthropic.com](https://console.anthropic.com)
+- **Azure OpenAI** - Azure subscription with OpenAI service
+- **Google Gemini** - Get from [Google AI Studio](https://makersuite.google.com)
+
+### System Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| **RAM** | 4 GB | 8 GB+ |
+| **Disk** | 2 GB free | 10 GB+ |
+| **CPU** | 2 cores | 4 cores+ |
+
+> **Note:** For local Ollama models, CPU is sufficient but GPU acceleration significantly improves performance.
+
 ## 🚀 Quick Start
 
 ### Option 1: Docker Compose (Recommended)
