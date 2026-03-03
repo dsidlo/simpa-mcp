@@ -1,0 +1,25 @@
+# Test dependencies for SIMPA
+
+# Core testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# Async support
+asyncpg>=0.29.0
+
+# Database testing
+testcontainers>=3.7.0
+sqlalchemy-utils>=0.41.0
+
+# Mocking
+pytest-mock>=3.12.0
+
+# Property-based testing (optional)
+hypothesis>=6.88.0
+
+# Type checking support
+pytest-clarity>=1.0.1
+
+# Coverage
+pytest-cov>=4.1.0

@@ -59,14 +59,10 @@ class Settings(BaseSettings):
         description="Maximum text length to cache",
     )
 
-    # LLM
-    llm_provider: Literal["openai", "anthropic", "ollama"] = Field(
-        default="ollama",
-        description="LLM service provider",
-    )
+    # LLM (LiteLLM compatible - any provider/model combo)
     llm_model: str = Field(
-        default="llama3.2",
-        description="LLM model name",
+        default="ollama/llama3.2",
+        description="LLM model in LiteLLM format: provider/model (e.g., 'gpt-4', 'claude-3-opus-20240229', 'ollama/llama3.2')",
     )
     llm_temperature: float = Field(
         default=0.7,
@@ -74,9 +70,30 @@ class Settings(BaseSettings):
         le=2.0,
         description="LLM temperature",
     )
+    # API Keys (LiteLLM will use these automatically based on model prefix)
+    openai_api_key: str | None = Field(
+        default=None,
+        description="OpenAI API key (used for openai/* models)",
+    )
     anthropic_api_key: str | None = Field(
         default=None,
-        description="Anthropic API key",
+        description="Anthropic API key (used for anthropic/* models)",
+    )
+    gemini_api_key: str | None = Field(
+        default=None,
+        description="Google Gemini API key (used for gemini/* models)",
+    )
+    azure_api_key: str | None = Field(
+        default=None,
+        description="Azure OpenAI API key (used for azure/* models)",
+    )
+    azure_api_base: str | None = Field(
+        default=None,
+        description="Azure OpenAI endpoint base URL",
+    )
+    cohere_api_key: str | None = Field(
+        default=None,
+        description="Cohere API key (used for command/* models)",
     )
 
     # LLM Cache

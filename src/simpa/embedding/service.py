@@ -1,10 +1,12 @@
-"""Embedding service for generating text embeddings with LRU caching."""
+"""Embedding service for generating text embeddings with LRU caching using LiteLLM."""
 
 import hashlib
 import structlog
+import warnings
 from collections import OrderedDict
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+import litellm
 from simpa.config import settings
 
 logger = structlog.get_logger()
@@ -73,13 +75,12 @@ class EmbeddingCache:
 
 
 class EmbeddingService:
-    """Service for generating text embeddings with LRU caching."""
+    """Service for generating text embeddings with LRU caching using LiteLLM."""
 
     def __init__(self) -> None:
-        self.provider = settings.embedding_provider
-        self.model = settings.embedding_model
+        # LiteLLM model format: provider/model (e.g., "openai/text-embedding-3-small", "ollama/nomic-embed-text")
+        self.model = f"{settings.embedding_provider}/{settings.embedding_model}"
         self.dimensions = settings.embedding_dimensions
-        self._client = None
         
         # Initialize cache
         self.cache_enabled = settings.embedding_cache_enabled
@@ -89,21 +90,6 @@ class EmbeddingService:
     def _compute_hash(self, text: str) -> str:
         """Compute hash for cache key."""
         return hashlib.sha256(text.encode()).hexdigest()
-
-    async def _get_client(self):
-        """Lazy load the appropriate client."""
-        if self._client is None:
-            if self.provider == "openai":
-                from openai import AsyncOpenAI
-
-                if not settings.openai_api_key:
-                    raise ValueError("OpenAI API key not configured")
-                self._client = AsyncOpenAI(api_key=settings.openai_api_key)
-            elif self.provider == "ollama":
-                import httpx
-
-                self._client = httpx.AsyncClient(base_url=settings.ollama_base_url)
-        return self._client
 
     def _should_cache(self, text: str) -> bool:
         """Determine if text should be cached.
@@ -127,7 +113,7 @@ class EmbeddingService:
         reraise=True,
     )
     async def embed(self, text: str) -> list[float]:
-        """Generate embedding for text with caching.
+        """Generate embedding for text with caching using LiteLLM.
 
         Args:
             text: Text to embed
@@ -145,31 +131,31 @@ class EmbeddingService:
                 logger.debug("embedding_cache_hit", text_length=len(text))
                 return cached
 
-        # Generate embedding
-        client = await self._get_client()
-        embedding = None
-
-        if self.provider == "openai":
-            response = await client.embeddings.create(
+        # Generate embedding using LiteLLM
+        try:
+            response = await litellm.aembedding(
                 model=self.model,
                 input=text,
+                dimensions=self.dimensions,
             )
-            embedding = response.data[0].embedding
+            
+            embedding = response.data[0].get("embedding", [])
+            
+        except Exception as e:
+            logger.error("embedding_failed", error=str(e), model=self.model)
+            raise RuntimeError(f"Embedding generation failed: {e}") from e
 
-        elif self.provider == "ollama":
-            response = await client.post(
-                "/api/embeddings",
-                json={
-                    "model": self.model,
-                    "prompt": text,
-                },
+        # Validate embedding dimensions
+        if len(embedding) != self.dimensions:
+            warnings.warn(
+                f"Embedding dimension mismatch: expected {self.dimensions}, got {len(embedding)}",
+                UserWarning,
             )
-            response.raise_for_status()
-            data = response.json()
-            embedding = data["embedding"]
-
-        else:
-            raise ValueError(f"Unknown embedding provider: {self.provider}")
+            logger.warning(
+                "embedding_dimension_mismatch",
+                expected=self.dimensions,
+                actual=len(embedding),
+            )
 
         # Cache the result
         if not cache_hit and self._should_cache(text):
@@ -188,33 +174,11 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
-        # Check cache first for all texts
+        # Process individually (LiteLLM handles batching internally for supported providers)
         results = []
-        to_compute = []
-        
-        for i, text in enumerate(texts):
-            if self._should_cache(text):
-                text_hash = self._compute_hash(text)
-                cached = self._cache.get(text_hash)
-                if cached is not None:
-                    results.append((i, cached))
-                    continue
-            to_compute.append((i, text))
-        
-        # Sort by index for consistent ordering
-        results = [None] * len(texts)
-        
-        # Compute embeddings for uncached texts
-        for idx, text in to_compute:
+        for text in texts:
             embedding = await self.embed(text)
-            results[idx] = embedding
-        
-        # Get cached results
-        for idx, text in enumerate(texts):
-            if results[idx] is None:
-                embedding = await self.embed(text)
-                results[idx] = embedding
-        
+            results.append(embedding)
         return results
 
     def get_cache_stats(self) -> dict:
@@ -226,7 +190,6 @@ class EmbeddingService:
         self._cache.clear()
         logger.info("embedding_cache_cleared")
 
-    async def close(self) -> None:
-        """Close the client connection."""
-        if self._client and self.provider == "ollama":
-            await self._client.aclose()
+    def close(self) -> None:
+        """Close the service and cleanup resources."""
+        self._cache.clear()
