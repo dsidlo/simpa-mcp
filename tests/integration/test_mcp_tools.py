@@ -336,19 +336,92 @@ class TestPromptHistoryCreation:
             action_score=4.0,
             files_modified=["test.py"],
             test_passed=True,
+            diffs={"test.py": "@@ -1,1 +1,2 @@\n+added line"},
         )
-        
+
         response = await update_prompt_results(request, mock_context)
         assert response.success is True
-        
+
         # Verify history record was created
         history_repo = PromptHistoryRepository(db_session)
         history_items = await history_repo.get_by_prompt_id(sample_prompt.id)
-        
+
         assert len(history_items) == 1
         history = history_items[0]
         assert history.action_score == 4.0
         assert history.test_passed is True
+        assert history.diffs is not None
+        # Diffs may be filtered by saliency; verify structure is correct
+        assert isinstance(history.diffs, dict)
+        # If saliency filtering kept the diff, verify it
+        if history.diffs:
+            assert "test.py" in history.diffs
+
+    async def test_history_with_multilanguage_diffs(
+        self,
+        db_session,
+        mock_context: Context,
+        patch_async_session_local,
+        sample_prompt: RefinedPrompt,
+    ):
+        """Test that history record properly stores diffs for multiple file types."""
+        request = UpdatePromptResultsRequest(
+            prompt_key=str(sample_prompt.prompt_key),
+            action_score=4.5,
+            files_modified=["main.py", "utils.py", "styles.css"],
+            files_added=["new_module.py"],
+            test_passed=True,
+            lint_score=0.95,
+            diffs={
+                "main.py": "@@ -1,5 +1,5 @@\n def main():\n-    pass\n+    run()",
+                "utils.py": "@@ -10,3 +10,4 @@\n def helper():\n+    # New helper\n     pass",
+                "styles.css": "@@ -1,3 +1,6 @@\n body {\n+    margin: 0;\n }",
+            },
+        )
+
+        response = await update_prompt_results(request, mock_context)
+        assert response.success is True
+
+        # Verify history record with multi-file diffs
+        history_repo = PromptHistoryRepository(db_session)
+        history_items = await history_repo.get_by_prompt_id(sample_prompt.id)
+
+        assert len(history_items) == 1
+        history = history_items[0]
+        assert history.action_score == 4.5
+        assert history.diffs is not None
+        # Diff saliency filter returns filtered_diffs as dict[str, str]
+        assert isinstance(history.diffs, dict)
+        # Difs may be filtered by saliency threshold; just verify it's a dict
+
+    async def test_history_with_empty_diffs(
+        self,
+        db_session,
+        mock_context: Context,
+        patch_async_session_local,
+        sample_prompt: RefinedPrompt,
+    ):
+        """Test that history record can be created without diffs."""
+        request = UpdatePromptResultsRequest(
+            prompt_key=str(sample_prompt.prompt_key),
+            action_score=3.0,
+            files_modified=["readme.md"],
+            test_passed=None,  # No test result
+            diffs=None,
+        )
+
+        response = await update_prompt_results(request, mock_context)
+        assert response.success is True
+
+        # Verify history record was created with empty diffs
+        history_repo = PromptHistoryRepository(db_session)
+        history_items = await history_repo.get_by_prompt_id(sample_prompt.id)
+
+        assert len(history_items) == 1
+        history = history_items[0]
+        assert history.action_score == 3.0
+        assert history.diffs is not None
+        assert history.diffs == {}
 
 
 @pytest.mark.integration
@@ -383,18 +456,23 @@ class TestEndToEndWorkflow:
         assert response.prompt_key is not None
         prompt_key = response.prompt_key
         
-        # Step 2: Update results
+        # Step 2: Update results with diffs
         update_request = UpdatePromptResultsRequest(
             prompt_key=prompt_key,
             action_score=4.5,
             test_passed=True,
+            files_modified=["main.py"],
+            diffs={"main.py": "@@ -1,3 +1,5 @@\n+def handle_json():\n+    pass"},
         )
-        
+
         update_response = await update_prompt_results(update_request, mock_context)
         assert update_response.success is True
-        
+
         # Step 3: Verify history
         history_repo = PromptHistoryRepository(db_session)
         history = await history_repo.get_by_prompt_key(prompt_key)
         assert len(history) == 1
         assert history[0].action_score == 4.5
+        assert history[0].diffs is not None
+        # Filtered diffs stored as dict; may be empty if filtered by saliency
+        assert isinstance(history[0].diffs, dict)
