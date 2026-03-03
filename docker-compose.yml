@@ -1,0 +1,134 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: simpa-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-simpa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-simpa}
+      POSTGRES_DB: ${POSTGRES_DB:-simpa}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-simpa} -d ${POSTGRES_DB:-simpa}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - simpa-network
+
+  # Ollama for local embeddings and LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: simpa-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Pull models on startup (optional, can be done manually)
+    # entrypoint: >
+    #   sh -c "ollama serve &
+    #          sleep 10 &&
+    #          ollama pull nomic-embed-text &&
+    #          ollama pull llama3.2 &&
+    #          wait"
+    networks:
+      - simpa-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Remove the deploy section if you don't have GPU support
+
+  # SIMPA MCP Service
+  simpa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: simpa-mcp
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-simpa}:${POSTGRES_PASSWORD:-simpa}@postgres:5432/${POSTGRES_DB:-simpa}
+      
+      # Embedding
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      OLLAMA_BASE_URL: http://ollama:11434
+      
+      # LLM
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-llama3.2}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.7}
+      
+      # MCP
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-stdio}
+      MCP_PORT: ${MCP_PORT:-8000}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      JSON_LOGGING: ${JSON_LOGGING:-false}
+      
+      # Security
+      MAX_PROMPT_LENGTH: ${MAX_PROMPT_LENGTH:-10000}
+      ENABLE_PII_DETECTION: ${ENABLE_PII_DETECTION:-true}
+    ports:
+      - "${MCP_PORT:-8000}:${MCP_PORT:-8000}"
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - simpa-network
+    command: ["python", "-m", "src.main"]
+    # For production, use: command: ["python", "-m", "src.main"]
+
+  # TestRunner for running tests
+  testrunner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: simpa-test
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-simpa}:${POSTGRES_PASSWORD:-simpa}@postgres:5432/${POSTGRES_DB:-simpa}_test
+      EMBEDDING_PROVIDER: ollama
+      EMBEDDING_MODEL: nomic-embed-text
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_PROVIDER: ollama
+      LLM_MODEL: llama3.2
+      LOG_LEVEL: DEBUG
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - simpa-network
+    profiles:
+      - test
+    command: ["pytest", "-v", "--tb=short"]
+
+volumes:
+  postgres_data:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  simpa-network:
+    driver: bridge
