@@ -26,6 +26,7 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.7.0",
     "testcontainers>=4.0.0",
+    "python-on-whales>=0.60.0",
 ]
 
 [build-system]
@@ -56,6 +57,8 @@ markers = [
     "integration: marks tests that require external services (TestContainers, PostgreSQL)",
     "unit: marks tests that don't require external services",
     "db: marks tests that require database access",
+    "docker: marks tests that require Docker daemon",
+    "slow: marks tests that take longer than 30 seconds",
 ]
 
 [dependency-groups]

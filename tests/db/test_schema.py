@@ -355,7 +355,7 @@ class TestPromptHistoryRepository:
             prompt_id=sample_prompt.id,
             action_score=4.0,
             files_modified=["file1.py"],
-            diffs={"python": [{"file": "file1.py", "diff": "..."}]},
+            diffs={"file1.py": "..."},
         )
         
         assert history.id is not None
@@ -441,7 +441,7 @@ class TestForeignKeyIntegrity:
         # Try to create history for non-existent prompt
         with pytest.raises(Exception):  # ForeignKeyViolation or similar
             await repo.create(
-                refined_prompt_id=uuid.uuid4(),
+                prompt_id=uuid.uuid4(),
                 action_score=4.0,
             )
             await db_session.commit()
