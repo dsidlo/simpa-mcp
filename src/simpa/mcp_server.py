@@ -9,11 +9,15 @@ from datetime import datetime
 from typing import Any, AsyncIterator
 
 from fastmcp import Context, FastMCP
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from simpa.config import settings
 from simpa.db.engine import AsyncSessionLocal, get_db_session
-from simpa.db.repository import PromptHistoryRepository, RefinedPromptRepository
+from simpa.db.repository import (
+    ProjectRepository,
+    PromptHistoryRepository,
+    RefinedPromptRepository,
+)
 from simpa.embedding.service import EmbeddingService
 from simpa.llm.service import LLMService
 from simpa.prompts.refiner import PromptRefiner
@@ -96,12 +100,24 @@ class RefinePromptRequest(BaseModel):
     other_languages: list[str] | None = Field(default=None, max_length=10)
     domain: str | None = Field(default=None, max_length=100)
     tags: list[str] | None = Field(default=None, max_length=20)
+    project_id: str | None = Field(default=None, description="Optional project ID to associate with this prompt")
     
     @field_validator("agent_type")
     @classmethod
     def validate_agent_type(cls, v: str) -> str:
         if not re.match(r"^[A-Za-z][A-Za-z0-9_-]*$", v):
             raise ValueError("agent_type must start with a letter and contain only alphanumeric characters, underscores, and hyphens")
+        return v
+
+    @field_validator("project_id")
+    @classmethod
+    def validate_project_id(cls, v: str | None) -> str | None:
+        """Validate project_id is a valid UUID if provided."""
+        if v is not None:
+            try:
+                uuid.UUID(v)
+            except ValueError:
+                raise ValueError("project_id must be a valid UUID")
         return v
     
     @field_validator("original_prompt")
@@ -121,6 +137,7 @@ class RefinePromptResponse(BaseModel):
     refined_prompt: str
     prompt_key: str
     source: str = Field(..., pattern="^(new|reused|refined)$")
+    action: str = Field(..., pattern="^(refine|new|reuse)$")
     confidence_score: float | None = None
     similar_prompts_found: int = 0
     average_score: float | None = None
@@ -166,6 +183,83 @@ class HealthCheckResponse(BaseModel):
     service: str
     version: str
     timestamp: str
+
+
+# Project Pydantic Models
+class CreateProjectRequest(BaseModel):
+    """Request to create a new project."""
+    project_name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=10000)
+    main_language: str | None = Field(default=None, min_length=1, max_length=50)
+    other_languages: list[str] | None = Field(default=None, max_length=20)
+    library_dependencies: list[str] | None = Field(default=None, max_length=100)
+
+    @field_validator("project_name")
+    @classmethod
+    def validate_project_name(cls, v: str) -> str:
+        """Validate project name format."""
+        if not re.match(r"^[A-Za-z][A-Za-z0-9_-]*$", v):
+            raise ValueError("project_name must start with a letter and contain only alphanumeric characters, underscores, and hyphens")
+        return v
+
+
+class CreateProjectResponse(BaseModel):
+    """Response from creating a project."""
+    project_id: str
+    project_name: str
+    created_at: str
+    description: str | None = None
+    success: bool = True  # Added for test compatibility
+
+
+class GetProjectRequest(BaseModel):
+    """Request to get a project."""
+    project_id: str | None = Field(default=None)
+    project_name: str | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def check_at_least_one_identifier(self) -> "GetProjectRequest":
+        """Ensure at least one identifier is provided."""
+        if not self.project_id and not self.project_name:
+            raise ValueError("Either project_id or project_name must be provided")
+        return self
+
+
+class GetProjectResponse(BaseModel):
+    """Response with project details."""
+    project_id: str
+    project_name: str
+    description: str | None
+    main_language: str | None
+    other_languages: list[str] | None
+    library_dependencies: list[str] | None
+    prompt_count: int
+    project_created_at: str
+    project_updated_at: str | None
+
+
+class ListProjectsRequest(BaseModel):
+    """Request to list projects."""
+    main_language: str | None = Field(default=None, max_length=50)
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class ProjectSummary(BaseModel):
+    """Summary of a project."""
+    project_id: str
+    project_name: str
+    main_language: str | None
+    prompt_count: int
+    project_created_at: str
+
+
+class ListProjectsResponse(BaseModel):
+    """Response with list of projects."""
+    projects: list[ProjectSummary]
+    total_count: int
+    limit: int
+    offset: int
 
 
 # Lifespan context for MCP server
@@ -267,6 +361,7 @@ async def refine_prompt(
                 refined_prompt=result["refined_prompt"],
                 prompt_key=result["prompt_key"],
                 source=result["source"],
+                action=result["action"],
                 confidence_score=result.get("confidence_score"),
                 similar_prompts_found=result.get("similar_prompts_found", 0),
                 average_score=result.get("average_score"),
@@ -391,6 +486,201 @@ async def health_check() -> HealthCheckResponse:
         version="1.0.0",
         timestamp=datetime.now().isoformat(),
     )
+
+
+@mcp.tool()
+async def create_project(
+    request: CreateProjectRequest,
+    ctx: Context,
+) -> CreateProjectResponse:
+    """Create a new project for organizing prompts.
+    
+    Creates a project with language and dependency metadata to enable
+    better prompt selection based on project context.
+    
+    Args:
+        request: Project creation request
+        
+    Returns:
+        Created project details
+    """
+    trace_id = str(uuid.uuid4())
+    log = logger.bind(
+        trace_id=trace_id,
+        project_name=request.project_name,
+        main_language=request.main_language,
+    )
+    log.info("create_project_called")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            # Check for duplicate project name first
+            repo = ProjectRepository(session)
+            existing = await repo.get_by_name(request.project_name)
+            if existing:
+                raise ValueError(f"Project with name '{request.project_name}' already exists")
+            
+            # Sanitize description if provided
+            sanitized_description = None
+            if request.description:
+                sanitized_description, detected_pii = sanitize_pii(request.description)
+                if detected_pii:
+                    log.warning("pii_detected_in_description", entities=list(detected_pii.keys()))
+            
+            # Create the project
+            project = await repo.create(
+                project_name=request.project_name,
+                description=request.description,
+                main_language=request.main_language,
+                other_languages=request.other_languages,
+                library_dependencies=request.library_dependencies,
+            )
+            
+            await session.commit()
+            
+            log.info(
+                "create_project_completed",
+                project_id=str(project.id),
+            )
+            
+            return CreateProjectResponse(
+                project_id=str(project.id),
+                project_name=project.project_name,
+                description=project.description,
+                created_at=project.created_at.isoformat(),
+            )
+            
+        except Exception as e:
+            await session.rollback()
+            log.error("create_project_failed", error=str(e))
+            raise
+
+
+@mcp.tool()
+async def get_project(
+    request: GetProjectRequest,
+    ctx: Context,
+) -> GetProjectResponse:
+    """Retrieve project information by ID or name.
+    
+    Args:
+        request: Get project request with project_id or project_name
+        
+    Returns:
+        Project details
+    """
+    trace_id = str(uuid.uuid4())
+    log = logger.bind(
+        trace_id=trace_id,
+        project_id=request.project_id,
+        project_name=request.project_name,
+    )
+    log.info("get_project_called")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            repo = ProjectRepository(session)
+            
+            # Find project by ID or name
+            if request.project_id:
+                try:
+                    project_uuid = uuid.UUID(request.project_id)
+                    project = await repo.get_by_id(project_uuid)
+                except ValueError:
+                    raise ValueError("project_id must be a valid UUID")
+            else:
+                project = await repo.get_by_name(request.project_name)
+            
+            if not project:
+                raise ValueError(f"Project not found")
+            
+            # Count associated prompts
+            prompt_count = len(project.prompts) if project.prompts else 0
+            
+            log.info(
+                "get_project_completed",
+                project_id=str(project.id),
+                prompt_count=prompt_count,
+            )
+            
+            return GetProjectResponse(
+                project_id=str(project.id),
+                project_name=project.project_name,
+                description=project.description,
+                main_language=project.main_language,
+                other_languages=project.other_languages,
+                library_dependencies=project.library_dependencies,
+                prompt_count=prompt_count,
+                project_created_at=project.created_at.isoformat(),
+                project_updated_at=project.updated_at.isoformat() if project.updated_at else None,
+            )
+            
+        except Exception as e:
+            log.error("get_project_failed", error=str(e))
+            raise
+
+
+@mcp.tool()
+async def list_projects(
+    request: ListProjectsRequest,
+    ctx: Context,
+) -> ListProjectsResponse:
+    """List all projects with optional filtering.
+    
+    Args:
+        request: List projects request with optional filters
+        
+    Returns:
+        Paginated list of projects
+    """
+    trace_id = str(uuid.uuid4())
+    log = logger.bind(
+        trace_id=trace_id,
+        main_language=request.main_language,
+        limit=request.limit,
+        offset=request.offset,
+    )
+    log.info("list_projects_called")
+    
+    async with AsyncSessionLocal() as session:
+        try:
+            repo = ProjectRepository(session)
+            
+            projects, total_count = await repo.list_projects(
+                main_language=request.main_language,
+                limit=request.limit,
+                offset=request.offset,
+            )
+            
+            # Build summaries
+            project_summaries = []
+            for project in projects:
+                project_summaries.append(
+                    ProjectSummary(
+                        project_id=str(project.id),
+                        project_name=project.project_name,
+                        main_language=project.main_language,
+                        prompt_count=len(project.prompts) if project.prompts else 0,
+                        project_created_at=project.created_at.isoformat(),
+                    )
+                )
+            
+            log.info(
+                "list_projects_completed",
+                returned_count=len(project_summaries),
+                total_count=total_count,
+            )
+            
+            return ListProjectsResponse(
+                projects=project_summaries,
+                total_count=total_count,
+                limit=request.limit,
+                offset=request.offset,
+            )
+            
+        except Exception as e:
+            log.error("list_projects_failed", error=str(e))
+            raise
 
 
 def main() -> None:

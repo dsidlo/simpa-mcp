@@ -32,23 +32,28 @@ class LLMResponseCache:
 
     def _init_db(self) -> None:
         """Initialize the SQLite database and create tables if needed."""
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS llm_cache (
-                key TEXT PRIMARY KEY,
-                response TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                expires_at TIMESTAMP NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_expires_at ON llm_cache(expires_at)
-        """)
-        conn.commit()
-        conn.close()
-        logger.debug("llm_cache_initialized", db_path=self.db_path)
+        try:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS llm_cache (
+                    key TEXT PRIMARY KEY,
+                    response TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    expires_at TIMESTAMP NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_expires_at ON llm_cache(expires_at)
+            """)
+            conn.commit()
+            conn.close()
+            logger.debug("llm_cache_initialized", db_path=self.db_path)
+        except sqlite3.Error as e:
+            logger.error("llm_cache_init_error", db_path=self.db_path, error=str(e))
+            # Disable cache on init error
+            self.enabled = False
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create database connection."""
@@ -74,10 +79,10 @@ class LLMResponseCache:
         if not self.enabled:
             return None
             
-        key = self._compute_key(system_prompt, user_prompt)
-        conn = self._get_connection()
-        
         try:
+            key = self._compute_key(system_prompt, user_prompt)
+            conn = self._get_connection()
+            
             cursor = conn.execute(
                 "SELECT response, expires_at FROM llm_cache WHERE key = ?",
                 (key,)
@@ -101,7 +106,7 @@ class LLMResponseCache:
             logger.info("cache_hit", key=key[:16])
             return response
             
-        except sqlite3.Error as e:
+        except (sqlite3.Error, ValueError, TypeError) as e:
             logger.error("cache_get_error", error=str(e))
             return None
 
@@ -127,9 +132,9 @@ class LLMResponseCache:
             cursor = conn.execute("SELECT COUNT(*) FROM llm_cache")
             count = cursor.fetchone()[0]
             
+            # Delete enough entries to make room for the new one
             if count >= self.max_entries:
-                # Delete oldest entries (10% of max)
-                to_delete = int(self.max_entries * 0.1)
+                to_delete = count - self.max_entries + 1
                 conn.execute(
                     """DELETE FROM llm_cache WHERE key IN (
                         SELECT key FROM llm_cache 

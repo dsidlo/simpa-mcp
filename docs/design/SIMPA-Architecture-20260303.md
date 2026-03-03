@@ -2,11 +2,12 @@
 
 **Date**: 2026-03-03  
 **Architect**: DT-Architect  
-**Version**: 1.0
+**Version**: 2.0  
+**Status**: Production Ready with Optimization Features
 
 ## Overview
 
-SIMPA (Self-Improving Meta Prompt Agent) is an MCP service that refines agent prompts before execution, learning from outcomes to continuously optimize prompt quality.
+SIMPA (Self-Improving Meta Prompt Agent) is an MCP service that refines agent prompts before execution, learning from outcomes to continuously optimize prompt quality. This document covers the system architecture, optimization features, and quality assurance strategy targeting 100% test coverage.
 
 ## High-Level Architecture
 
@@ -179,6 +180,12 @@ sequenceDiagram
 | Embedding Model | nomic-embed-text:latest | Local via Ollama, 768-dim, good balance |
 | LLM | Claude 3.5 Sonnet or GPT-4 | High-quality reasoning for refinement |
 | ORM | SQLAlchemy 2.0 | Mature, async support, type hints |
+| Testing | pytest + pytest-asyncio | Comprehensive async test support |
+| Coverage | pytest-cov | Coverage reporting with CI/CD integration |
+| Mocks | unittest.mock + pytest-mock | Dependency mocking for unit tests |
+| DB Tests | testcontainers | PostgreSQL integration tests |
+| Linting | ruff + mypy | Fast linting and type checking |
+| Formatting | black | Consistent code formatting |
 
 ## Deployment Considerations
 
@@ -942,11 +949,191 @@ HEALTH_CHECKS = {
 
 ---
 
+## Optimization Features (New in v2.0)
+
+SIMPA includes several performance optimization features designed to minimize LLM API calls and reduce latency:
+
+### 1. Hash-Based Fast-Path Lookup
+
+A SHA-256 hash of the combined agent_type + original_prompt enables exact-match cache hits before vector search:
+
+```
+Workflow: Hash Lookup → Exact Match Found → Immediate Reuse
+           (if high score) → No LLM Call Required
+```
+
+**Configuration**:
+- `hash_fast_path_enabled`: Enable/disable fast path
+- `hash_fast_path_min_score`: Minimum average score (default: 4.0) for fast-path reuse
+
+**Benefits**:
+- Eliminates vector embedding generation for exact matches
+- Avoids database vector search query
+- Zero LLM calls for cached high-quality prompts
+
+### 2. Multi-Tier Caching Strategy
+
+SIMPA implements three complementary cache layers:
+
+| Cache Layer | Implementation | Purpose | TTL |
+|-------------|----------------|---------|-----|
+| **LLM Response Cache** | SQLite with SHA-256 keys | Cache LLM refinement responses | Configurable (default: 1 hour) |
+| **Embedding Cache** | In-memory LRU (OrderedDict) | Cache embedding vectors | Application lifetime |
+| **Hash Fast-Path** | Database query | Exact prompt match lookup | N/A (persistent) |
+
+**Cache Statistics Available**:
+```python
+# Per-request tracking
+{
+    "llm_cache_hits": int,
+    "embedding_cache_hits": int,
+    "hash_fast_path_hits": int,
+    "llm_calls_made": int,
+    "total_llm_calls_avoided": int
+}
+```
+
+### 3. Diff Saliency Filtering
+
+Intelligent filtering of file diffs based on semantic importance:
+
+**Saliency Score Components**:
+- **Impact Ratio** (30%): Change size relative to file size
+- **Semantic Relevance** (35%): Cosine similarity to request context
+- **Keyword Density** (25%): Presence of important code keywords
+- **File Type Weight** (10%): Language-specific importance
+
+**Configuration**:
+- `diff_saliency_enabled`: Enable filtering
+- `diff_saliency_threshold`: Minimum score (default: 0.6)
+- `diff_max_stored_per_request`: Maximum diffs stored (default: 10)
+
+**Code Keyword Dictionary** (from `src/simpa/core/diff_saliency.py`):
+```python
+CODE_KEYWORDS = {
+    "def ", "class ", "import ", "return", "raise", "await",
+    "async ", "try:", "except", "finally", "if ", "elif ", "else:",
+    "for ", "while ", "with ", "yield", "lambda", "@"  # decorators
+}
+```
+
+### 4. Similarity-Based LLM Bypass
+
+When a very similar prompt exists with high performance, bypass LLM refinement entirely:
+
+```python
+if similarity_score >= similarity_bypass_threshold and \
+   existing_prompt.average_score >= similarity_bypass_min_score:
+    return existing_prompt  # No LLM call
+```
+
+**Configuration**:
+- `similarity_bypass_threshold`: Default 0.95 (cosine similarity)
+- `similarity_bypass_min_score`: Default 4.5 (minimum performance)
+
+---
+
+## Test Coverage Strategy (Target: 100%)
+
+SIMPA is committed to comprehensive test coverage with a multi-layered testing approach:
+
+### Test Architecture
+
+```
+tests/
+├── conftest.py              # Shared fixtures and mocks
+├── unit/                    # 162 tests - no external dependencies
+│   ├── test_config.py       # Settings validation (100% coverage)
+│   ├── test_selector.py     # Sigmoid logic, selection algorithms
+│   ├── test_refiner.py      # Prompt refinement logic
+│   ├── test_hash_lookup.py  # Fast-path cache testing
+│   ├── test_db_engine.py    # Database engine configuration
+│   ├── test_llm_cache.py    # SQLite caching layer
+│   ├── test_embedding_cache.py  # LRU embedding cache
+│   ├── test_embedding_service.py
+│   ├── test_llm_service.py  # LLM provider abstractions
+│   └── test_diff_saliency.py   # Saliency scoring algorithms
+├── integration/             # End-to-end workflows
+│   ├── test_mcp_tools.py    # MCP tool integration
+│   └── test_optimized_workflow.py  # Optimization verification
+└── db/                      # Database-specific tests
+    └── test_schema.py       # PostgreSQL schema validation
+```
+
+### Coverage by Module (Current: Unit Tests Only)
+
+| Module | Coverage | Status |
+|--------|----------|--------|
+| `simpa/config.py` | 100% | ✅ Complete |
+| `simpa/core/__init__.py` | 100% | ✅ Complete |
+| `simpa/db/__init__.py` | 100% | ✅ Complete |
+| `simpa/db/engine.py` | 100% | ✅ Complete |
+| `simpa/core/diff_saliency.py` | 83% | ⚠️ Needs 100% |
+| `simpa/db/models.py` | 78% | ⚠️ Needs 100% |
+| `simpa/llm/service.py` | 88% | ⚠️ Needs 100% |
+| `simpa/embedding/service.py` | 61% | ⚠️ Needs 100% |
+| `simpa/prompts/selector.py` | 97% | ⚠️ Needs 100% |
+| `simpa/prompts/refiner.py` | 69% | ⚠️ Needs 100% |
+| `simpa/llm/cache.py` | 50% | ⚠️ Needs 100% |
+| `simpa/db/repository.py` | 0% | ❌ Needs tests |
+| `simpa/mcp_server.py` | 0% | ❌ Mocked in unit tests |
+
+### Testing Tools Configuration
+
+```toml
+# pytest.ini
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require external services",
+    "unit: marks tests that don't require external services",
+    "db: marks tests that require database access",
+]
+```
+
+### Critical Test Scenarios
+
+1. **Optimization Verification**:
+   - Hash fast-path returns identical prompts immediately
+   - LLM cache prevents duplicate LLM calls
+   - Embedding cache reduces vector generation calls
+   - Diff saliency properly filters trivial changes
+
+2. **Sigmoid Function Tests**:
+   - Monotonicity: probability decreases as score increases
+   - Boundary conditions: score=1.0, score=5.0
+   - Default score: unused prompts get neutral treatment
+   - Min probability floor: always 5% exploration
+
+3. **Cache Behavior**:
+   - TTL expiration for LLM cache
+   - LRU eviction for embedding cache
+   - Cache hit rate reporting
+   - Concurrent access safety
+
+4. **Error Handling**:
+   - Network failures during embedding generation
+   - Database connection issues
+   - LLM API rate limiting
+   - Invalid prompt keys in update operations
+
+### Performance Test Targets
+
+| Metric | Target | Test |
+|--------|--------|------|
+| Fast Path Hit Rate | > 40% | `test_fast_path_hit_rate_above_40_percent` |
+| LLM Cache Effectiveness | > 20% | `test_llm_cache_effective` |
+| Trivial Diff Filtering | > 50% | `test_trivial_diffs_filtered` |
+| Embedding Cache Hit Rate | > 60% | `test_embedding_cache_reduces_calls` |
+
+---
+
 ## Next Steps
 
-1. **Implementation**: FastMCP server skeleton with security middleware
-2. **Database**: Execute schema migration and pgvector setup
-3. **Integration**: Connect LLM provider (Claude/GPT-4) and embedding service
-4. **Security**: Implement PII detection and audit logging
-5. **Observability**: Deploy Prometheus metrics and OpenTelemetry traces
-6. **Testing**: Load test vector search, validate sigmoid behavior, chaos test
+1. **Implementation**: Complete remaining high-coverage unit tests (repository, cache modules)
+2. **Integration**: Add mocking framework for MCP server unit tests
+3. **Security**: Complete PII detection unit testing
+4. **Observability**: Add health check endpoint tests
+5. **CI/CD**: Configure automated coverage reporting with 95%+ threshold
+6. **Documentation**: Keep architecture diagram in sync with code changes

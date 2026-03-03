@@ -244,8 +244,6 @@ class SalientDiffFilter:
     def __init__(self, scorer: Optional[DiffSaliencyScorer] = None):
         """Initialize the filter."""
         self.scorer = scorer or DiffSaliencyScorer()
-        self.threshold = settings.diff_saliency_threshold
-        self.max_diffs = settings.diff_max_stored_per_request
 
     async def filter_diffs(
         self,
@@ -261,6 +259,10 @@ class SalientDiffFilter:
         Returns:
             Tuple of (filtered_diffs, saliency_metadata)
         """
+        # Read settings at runtime to allow test overrides
+        threshold = settings.diff_saliency_threshold
+        max_diffs = settings.diff_max_stored_per_request
+        
         if not settings.diff_saliency_enabled:
             return diffs, {"enabled": False}
             
@@ -276,12 +278,12 @@ class SalientDiffFilter:
         # Filter by threshold
         above_threshold = [
             sd for sd in scored_diffs 
-            if sd.saliency_score >= self.threshold
+            if sd.saliency_score >= threshold
         ]
         
         # Sort by score descending and take top N
         sorted_diffs = sorted(above_threshold, key=lambda x: x.saliency_score, reverse=True)
-        kept_diffs = sorted_diffs[:self.max_diffs]
+        kept_diffs = sorted_diffs[:max_diffs]
         
         # Build result dict
         filtered = {sd.file_path: sd.diff_content for sd in kept_diffs}
@@ -291,7 +293,7 @@ class SalientDiffFilter:
             "enabled": True,
             "total": len(diffs),
             "kept": len(kept_diffs),
-            "threshold": self.threshold,
+            "threshold": threshold,
             "scores": {
                 sd.file_path: round(sd.saliency_score, 3) 
                 for sd in kept_diffs
@@ -299,7 +301,7 @@ class SalientDiffFilter:
             "filter_stats": {
                 "above_threshold": len(above_threshold),
                 "below_threshold": len(diffs) - len(above_threshold),
-                "truncated": len(above_threshold) > self.max_diffs,
+                "truncated": len(above_threshold) > max_diffs,
             }
         }
         
@@ -307,7 +309,7 @@ class SalientDiffFilter:
             "diffs_filtered",
             total=len(diffs),
             kept=len(kept_diffs),
-            threshold=self.threshold
+            threshold=threshold
         )
         
         return filtered, metadata
