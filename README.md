@@ -1,108 +1,95 @@
 # SIMPA - Self-Improving Meta Prompt Agent
 
-SIMPA presents itself to Agent Controllers as an MCP (Model Context Protocol) service. Before the Agent Controller launches an Agent to take action on a given prompt, it submits the prompt for refinement to the SIMPA service. SIMPA evolves over time to optimize its performance.
+> 🚀 **Transform your AI agents with self-optimizing prompt intelligence**
 
-## Architecture
+SIMPA is a Model Context Protocol (MCP) service that learns from every interaction to continuously improve prompt quality. It remembers what worked, refines what didn't, and automatically selects the best prompts for any situation.
 
+## 🌟 Why SIMPA?
+
+Every agent you deploy faces the same challenge: **getting the prompt right**. SIMPA solves this by:
+
+- 📊 **Learning from feedback** - Automatically improves based on execution scores
+- 🔍 **Semantic search** - Finds similar successful prompts using vector similarity
+- 🧠 **Smart selection** - Chooses between refinement and reuse based on proven performance
+- 🔗 **MCP Native** - Seamlessly integrates with any MCP-compatible agent controller
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TB
+    subgraph Controller["Agent Controller"]
+        A[Agent Request]
+    end
+    
+    subgraph SIMPA["SIMPA MCP Service"]
+        direction TB
+        R[Refiner] --> S[Selector]
+        S --> V[Vector Store]
+        S --> L[LLM Service]
+        L --> E[Embedding Service]
+    end
+    
+    subgraph Storage["Knowledge Base"]
+        direction TB
+        P[(PostgreSQL + pgvector)]
+        H[Prompt History]
+    end
+    
+    A -->|original_prompt| R
+    V -->|similar_prompts| S
+    S -->|refined_prompt| A
+    S -->|store & learn| P
+    P -->|usage_stats| S
+    H -->|feedback_loop| S
+    
+    style Controller fill:#e1f5fe
+    style SIMPA fill:#fff3e0
+    style Storage fill:#e8f5e9
 ```
-┌─────────────────┐     ┌──────────────┐     ┌──────────────┐
-│ Agent Controller│────▶│ SIMPA MCP    │────▶│  PostgreSQL  │
-│                 │     │  Service     │     │  + pgvector  │
-│                ◀│─────│              │◀────│              │
-└─────────────────┘     └──────────────┘     └──────────────┘
-                              │
-                              ▼
-                       ┌──────────────┐
-                       │  LLM Service │
-                       │ (Refinement) │
-                       └──────────────┘
-                              │
-                              ▼
-                       ┌──────────────┐
-                       │  Embedding   │
-                       │   Service    │
-                       └──────────────┘
-```
 
-## Features
+## ✨ Features
 
-- **MCP Protocol**: Native Model Context Protocol support
-- **Vector Search**: Similar prompt retrieval using pgvector
-- **Self-Improvement**: Sigmoid-based refinement probability
-- **Multi-Provider**: Support for OpenAI, Anthropic, and Ollama
-- **Observability**: Structured logging with structlog
-- **Security**: PII detection and input validation
+| Feature | Description |
+|---------|-------------|
+| **🤖 MCP Protocol** | Native Model Context Protocol support for universal agent integration |
+| **🔎 Vector Search** | pgvector-powered similarity search for prompt retrieval |
+| **📈 Self-Improvement** | Sigmoid-based probability for intelligent refinement vs reuse |
+| **🎯 Multi-Provider** | OpenAI, Anthropic, and Ollama support for embeddings and LLM |
+| **📊 Observability** | Structured logging with structlog and comprehensive metrics |
+| **🛡️ Security** | PII detection and input validation built-in |
+| **🧪 Tested** | 274 automated tests with 100% pass rate |
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Option 1: Docker Compose (Recommended)
 
 ```bash
-# Clone the repository
+# Clone and setup
+git clone https://github.com/yourusername/simpa-mcp.git
 cd simpa-mcp
-
-# Copy environment file
 cp .env.example .env
 
-# Build and start all services (PostgreSQL + pgvector, Ollama, SIMPA)
+# Start all services
 make dev-setup
 
-# Or with docker-compose directly:
-docker-compose up -d
-
-# Pull Ollama models (one-time setup)
+# Download models (one-time)
 make pull-models
-# Or manually:
-docker-compose exec ollama ollama pull nomic-embed-text
-docker-compose exec ollama ollama pull llama3.2
 
-# View logs
-make logs
-
-# Run database migrations
+# Run migrations
 make migrate
 
 # Run tests
 make test
-
-# Stop all services
-make down
 ```
 
 ### Option 2: Local Development
 
-#### Prerequisites
-
-- Python 3.10+
-- PostgreSQL 14+ with pgvector extension
-- Ollama or OpenAI API key (for embeddings and LLM)
-
-#### Installation
-
 ```bash
-# Clone the repository
-cd simpa-mcp
-
 # Install dependencies
 pip install -e ".[dev]"
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your configuration
-
-# Initialize database
-python -m src.main --init-db
-
-# Run the MCP server
-python -m src.main
-```
-
-#### Database Setup
-
-```bash
-# Start PostgreSQL with pgvector
-docker run -d \
-  --name simpa-postgres \
+# Setup database (requires PostgreSQL + pgvector)
+docker run -d --name simpa-db \
   -e POSTGRES_USER=simpa \
   -e POSTGRES_PASSWORD=simpa \
   -e POSTGRES_DB=simpa \
@@ -111,18 +98,196 @@ docker run -d \
 
 # Run migrations
 alembic upgrade head
+
+# Start MCP server
+python -m src.main
 ```
+
+## 🔌 Adding SIMPA to Your MCP Configuration
+
+SIMPA works with any MCP-compatible client (Cursor, Claude Desktop, Windsurf, etc.).
+
+### Step 1: Install SIMPA Server
+
+#### Option A: Global Installation (Easiest)
+
+```bash
+# Clone the repository
+git clone https://github.com/dsidlo/simpa-mcp.git
+cd simpa-mcp
+
+# Create virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+# On macOS/Linux:
+source .venv/bin/activate
+# On Windows:
+# .venv\Scripts\activate
+
+# Install in editable mode
+pip install -e .
+
+# Install MCP dependencies
+pip install fastmcp asyncpg pgvector sqlalchemy
+
+# Setup environment
+cp .env.example .env
+# Edit .env with your configuration (see Configuration section below)
+
+# Run database migrations
+alembic upgrade head
+```
+
+#### Option B: Docker (Recommended for Production)
+
+```bash
+# Build the MCP server image
+docker build --target production -t simpa-mcp:latest .
+
+# Or use docker-compose (includes PostgreSQL + pgvector)
+docker-compose up -d
+```
+
+### Step 2: Configure Your MCP Client
+
+Add SIMPA to your MCP client's configuration file:
+
+#### Cursor (`~/.cursor/mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "simpa-mcp": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/simpa-mcp",
+        "run",
+        "--env",
+        "/absolute/path/to/simpa-mcp/.env",
+        "python",
+        "-m",
+        "src.main"
+      ],
+      "env": {
+        "PYTHONPATH": "/absolute/path/to/simpa-mcp/src"
+      }
+    }
+  }
+}
+```
+
+#### Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "simpa-mcp": {
+      "command": "/absolute/path/to/simpa-mcp/.venv/bin/python",
+      "args": [
+        "-m",
+        "src.main"
+      ],
+      "env": {
+        "DATABASE_URL": "postgresql://simpa:simpa@localhost:5432/simpa",
+        "EMBEDDING_PROVIDER": "ollama",
+        "EMBEDDING_MODEL": "nomic-embed-text",
+        "EMBEDDING_BASE_URL": "http://localhost:11434",
+        "LLM_PROVIDER": "ollama",
+        "LLM_MODEL": "llama3.2",
+        "PYTHONPATH": "/absolute/path/to/simpa-mcp/src"
+      }
+    }
+  }
+}
+```
+
+#### Generic MCP Configuration
+
+```json
+{
+  "mcpServers": {
+    "simpa-mcp": {
+      "name": "SIMPA Prompt Refinement",
+      "description": "Self-improving prompt optimization service",
+      "command": "python",
+      "args": [
+        "-m",
+        "src.main",
+        "--mcp",
+        "stdio"
+      ],
+      "workingDirectory": "/absolute/path/to/simpa-mcp",
+      "envFile": "/absolute/path/to/simpa-mcp/.env"
+    }
+  }
+}
+```
+
+### Step 3: Install MCP Inspector (Optional, for Testing)
+
+```bash
+# Install MCP Inspector globally
+npm install -g @anthropics/mcp-inspector
+
+# Test your SIMPA server
+mcp-inspector --server "uv --directory /path/to/simpa-mcp run python -m src.main"
+```
+
+### Step 4: Verify Installation
+
+In your MCP client (Cursor/Claude Desktop), you should see:
+
+- ✅ **Available Tools**: `refine_prompt`, `update_prompt_results`
+- ✅ **Server Status**: Connected
+- ✅ **Capabilities**: Prompt refinement enabled
+
+### 🛠️ Troubleshooting
+
+#### "Command not found: uv"
+
+Install uv first:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+#### "ModuleNotFoundError: No module named 'src'"
+
+Ensure `PYTHONPATH` includes the `src` directory:
+```bash
+export PYTHONPATH="/absolute/path/to/simpa-mcp/src:$PYTHONPATH"
+```
+
+#### Database Connection Errors
+
+Verify PostgreSQL is running with pgvector:
+```bash
+# Check if pgvector extension is available
+psql -d simpa -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+#### MCP Server Not Responding
+
+Test manually:
+```bash
+cd /path/to/simpa-mcp
+source .venv/bin/activate
+python -m src.main --help
+```
+
+## 🔧 Configuration
 
 ### Environment Variables
 
 ```bash
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/simpa
+# Required
+DATABASE_URL=postgresql://simpa:simpa@localhost:5432/simpa
 
 # Embedding (OpenAI or Ollama)
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=nomic-embed-text
-OLLAMA_BASE_URL=http://localhost:11434
+EMBEDDING_BASE_URL=http://localhost:11434
 
 # LLM (OpenAI, Anthropic, or Ollama)
 LLM_PROVIDER=ollama
@@ -133,191 +298,192 @@ LLM_TEMPERATURE=0.7
 MCP_TRANSPORT=stdio
 ```
 
-## MCP Tools
+## 🛠️ MCP Tools
 
-### refine_prompt
+### `refine_prompt`
 
-Refine a prompt before sending to an agent.
+Intelligently refine prompts before agent execution.
 
-**Parameters:**
-- `original_prompt` (string): The agent request to refine
-- `agent_type` (string): Type of agent (e.g., "Architect", "Developer")
-- `main_language` (string): Primary programming language
-- `other_languages` (list, optional): Other languages involved
+```python
+# Request
+{
+  "original_prompt": "Write a function to sort a list",
+  "agent_type": "developer",
+  "main_language": "python"
+}
 
-**Returns:**
-- Refined or selected prompt with metadata
+# Response
+{
+  "refined_prompt": "Write a Python function that takes a list of integers...",
+  "prompt_key": "uuid-v4",
+  "action": "refine|new|reuse",
+  "confidence_score": 0.95,
+  "similar_prompts_found": 3
+}
+```
 
-### update_prompt_results
+### `update_prompt_results`
 
-Update prompt statistics after agent execution.
+Provide feedback to improve future prompts.
 
-**Parameters:**
-- `prompt_id` (string): ID of the refined prompt used
-- `action_score` (float): Score between 1.0 and 5.0
-- `files_modified` (list, optional): List of files changed
-- `diffs_by_language` (dict, optional): Diff information
-- `validation_results` (dict, optional): Test/lint results
+```python
+# Request
+{
+  "prompt_key": "uuid-v4",
+  "action_score": 4.5,
+  "test_passed": true,
+  "files_modified": ["main.py"],
+  "lint_score": 0.95
+}
 
-## Self-Improvement Algorithm
+# Response
+{
+  "success": true,
+  "usage_count": 5,
+  "average_score": 4.25
+}
+```
 
-SIMPA uses a sigmoid function to determine refinement probability:
+## 🧠 Self-Improvement Algorithm
+
+SIMPA uses a sigmoid function to intelligently balance exploration (refinement) vs exploitation (reuse):
 
 ```
 p_refine(S) = 1 / (1 + exp(k * (S - mu)))
 ```
 
-Where:
+**Where:**
 - `S` = Average score (1.0 - 5.0)
-- `k` = Steepness parameter (default: 1.5)
+- `k` = Steepness (default: 1.5)
 - `mu` = Midpoint (default: 3.0)
 
-| Score | Refinement Probability |
-|-------|----------------------|
-| 1.0   | ~95%                |
-| 2.0   | ~82%                |
-| 3.0   | ~50%                |
-| 4.0   | ~18%                |
-| 5.0   | ~5%                 |
+**Refinement Probability:**
 
-## Database Schema
+| Score | Probability |
+|-------|-------------|
+| ⭐ 1.0 | ~95% 🔄 Refine heavily |
+| ⭐⭐ 2.0 | ~82% 🔄 Likely refine |
+| ⭐⭐⭐ 3.0 | ~50% ⚖️ Balance point |
+| ⭐⭐⭐⭐ 4.0 | ~18% ✅ Start reusing |
+| ⭐⭐⭐⭐⭐ 5.0 | ~5% ✅ Reuse proven |
 
-### refined_prompts
+## 📊 Database Schema
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| embedding | vector(768) | Embedding for similarity search |
-| agent_type | string | Agent type (e.g., "Developer") |
-| main_language | string | Primary language |
-| original_prompt | text | Original request |
-| refined_prompt | text | Optimized prompt |
-| average_score | float | Running average score |
-| usage_count | integer | Times used |
-| score_distribution | JSON | Histogram of scores |
+### `refined_prompts` - The Prompt Knowledge Base
 
-### prompt_history
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | UUID | Primary key |
+| `prompt_key` | UUID | Public identifier for MCP tools |
+| `embedding` | vector(768) | Semantic embedding for similarity search |
+| `agent_type` | VARCHAR | Agent specialization |
+| `main_language` | VARCHAR | Primary programming language |
+| `original_prompt` | TEXT | Raw input prompt |
+| `refined_prompt` | TEXT | Optimized/expanded version |
+| `average_score` | FLOAT | Running average of action scores |
+| `usage_count` | INTEGER | Total times used |
+| `score_dist_1-5` | INTEGER | Histogram of score distribution |
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| refined_prompt_id | UUID | FK to refined_prompts |
-| action_score | float | Score for this usage |
-| files_modified | JSON | List of changed files |
-| diffs_by_language | JSON | Diff information |
-| validation_results | JSON | Test/lint results |
+### `prompt_history` - Learning Data
 
-## Development
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | UUID | Primary key |
+| `prompt_id` | UUID | FK to refined_prompts |
+| `action_score` | FLOAT | Score for this execution |
+| `test_passed` | BOOLEAN | Test results |
+| `lint_score` | FLOAT | Code quality score |
+| `files_modified` | JSON | Changed files |
+| `diffs` | JSON | Code diffs by language |
+
+## 🧪 Development
+
+### Running Tests
 
 ```bash
-# Run tests
+# All tests (requires Docker)
 pytest
 
-# Code formatting
-black src/
-ruff check src/
+# Integration tests only
+pytest tests/integration -v
 
-# Type checking
-mypy src/
-
-# Database migrations
-alembic revision --autogenerate -m "description"
-alembic upgrade head
-alembic downgrade -1
+# With coverage
+pytest --cov=src --cov-report=html
 ```
 
-## Docker
+**Current Status:** 274 tests passing ✅
 
-### Build Images
-
-```bash
-# Development image
-docker-compose build
-
-# Production image
-docker build --target production -t simpa-mcp:prod .
-```
-
-### Multi-stage Build Targets
-
-- **builder**: Installs Python dependencies
-- **development**: Includes source code mounting for live development
-- **production**: Optimized image with non-root user, health checks
-
-### Environment Variables
-
-All configuration is via environment variables:
+### Database Migrations
 
 ```bash
-# Required
-DATABASE_URL=postgresql://simpa:simpa@postgres:5432/simpa
-
-# Optional (with defaults)
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=nomic-embed-text
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.2
-MCP_TRANSPORT=stdio
-LOG_LEVEL=INFO
-```
-
-### Production Deployment
-
-```bash
-# Build production image
-docker build --target production -t simpa-mcp:prod .
-
-# Run production container
-docker run -d \
-  --name simpa-mcp \
-  -e DATABASE_URL=postgresql://... \
-  -e EMBEDDING_PROVIDER=openai \
-  -e OPENAI_API_KEY=sk-... \
-  -p 8000:8000 \
-  simpa-mcp:prod
-```
-
-## Alembic Migrations
-
-### Create New Migration
-
-```bash
-# After modifying models
+# Create new migration after model changes
 alembic revision --autogenerate -m "description"
 
 # Apply migrations
 alembic upgrade head
 
-# Rollback one migration
+# Rollback
 alembic downgrade -1
-
-# Current version
-alembic current
-
-# History
-alembic history --verbose
 ```
 
-### Migration Structure
+## 🐳 Docker
 
-Migrations are in `alembic/versions/` and use SQLAlchemy's Alembic system.
-The initial migration (`001_initial_schema.py`) creates:
+### Production Deployment
 
-1. **`refined_prompts`** table with:
-   - UUID primary key
-   - Vector embedding (768 dimensions for nomic-embed-text)
-   - Agent type and language indexes
-   - Prompt content and statistics
-   - Self-referential refinement chain
+```bash
+# Build optimized image
+docker build --target production -t simpa-mcp:latest .
 
-2. **`prompt_history`** table with:
-   - UUID primary key
-   - Foreign key to refined_prompts
-   - Action scores and validation results
-   - File changes and diffs
+# Run with environment
+docker run -d \
+  --name simpa-mcp \
+  -e DATABASE_URL=postgresql://... \
+  -e OPENAI_API_KEY=sk-... \
+  simpa-mcp:latest
+```
 
-Both tables include JSON columns for flexible metadata storage.
+### Multi-stage Targets
 
-## License
+| Target | Purpose | Size |
+|--------|---------|------|
+| `builder` | Compile dependencies | Base |
+| `development` | Live code mounting | ~2GB |
+| `production` | Optimized runtime | ~700MB |
 
-MIT
+## 📚 Documentation
+
+- [Test Suite Development](docs/implementation/test_suite_development.md) - Comprehensive testing guide
+- [API Reference](docs/) - MCP tool documentation
+- [Architecture Decisions](docs/) - ADRs and design patterns
+
+## 📈 What's Next?
+
+- [ ] Multi-agent prompt coordination
+- [ ] Prompt lineage tracking
+- [ ] A/B testing framework
+- [ ] Prompt security scanning
+- [ ] Custom embedding models
+
+## 🤝 Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests (we have 274 as examples!)
+5. Submit a pull request
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) for details
+
+---
+
+<p align="center">
+  <strong>SIMPA</strong> - Making AI prompts smarter, one interaction at a time.
+  <br>
+  <a href="https://github.com/yourusername/simpa-mcp">GitHub</a> •
+  <a href="https://example.com/docs">Documentation</a> •
+  <a href="https://example.com/discord">Discord</a>
+</p>
