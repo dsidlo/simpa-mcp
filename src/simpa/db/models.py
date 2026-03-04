@@ -77,6 +77,12 @@ class RefinedPrompt(Base):
         nullable=False,
         index=True,
     )
+    refinement_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="sigmoid",
+        server_default="sigmoid",
+    )
     main_language: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
