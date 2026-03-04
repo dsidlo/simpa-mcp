@@ -13,6 +13,9 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from simpa.config import settings
+from simpa.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Convert PostgreSQL DSN to async format
 _async_database_url = str(settings.database_url).replace(
@@ -36,14 +39,34 @@ def _create_engine(database_url: str | None = None, pool_size: int | None = None
     """
     url = database_url or _async_database_url
     
+    # Mask password in logs
+    safe_url = url
+    if "@" in url:
+        # Replace password with *** for logging
+        parts = url.split("@")
+        creds = parts[0].split(":")
+        if len(creds) >= 3:
+            safe_url = f"{creds[0]}:***@{parts[1]}"
+    
+    logger.debug("creating_database_engine", url=safe_url, pool_size=pool_size)
+    
     # Use NullPool when pool_size is None (for tests) to avoid connection reuse issues
     if pool_size is None:
+        logger.info("database_engine_created", pool_type="NullPool", url=safe_url)
         return create_async_engine(
             url,
             echo=settings.log_level == "DEBUG",
             future=True,
             poolclass=NullPool,
         )
+    
+    logger.info(
+        "database_engine_created",
+        pool_type="QueuePool",
+        pool_size=pool_size,
+        max_overflow=20,
+        url=safe_url,
+    )
     
     return create_async_engine(
         url,
@@ -81,16 +104,32 @@ async def init_db() -> None:
 
     from simpa.db.models import Base
 
-    async with async_engine.begin() as conn:
-        # Enable pgvector extension
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # Create all tables
-        await conn.run_sync(Base.metadata.create_all)
+    logger.info("database_initialization_started")
+    
+    try:
+        async with async_engine.begin() as conn:
+            # Enable pgvector extension
+            logger.debug("creating_pgvector_extension")
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            logger.debug("pgvector_extension_ready")
+            
+            # Create all tables
+            logger.debug("creating_database_tables")
+            await conn.run_sync(Base.metadata.create_all)
+            logger.debug("database_tables_created")
+        
+        logger.info("database_initialization_complete")
+        
+    except Exception as e:
+        logger.error("database_initialization_failed", error=str(e), exc_info=True)
+        raise
 
 
 async def close_db() -> None:
     """Close database connections."""
+    logger.info("database_closing_connections")
     await async_engine.dispose()
+    logger.info("database_connections_closed")
 
 
 def reset_engine(database_url: str | None = None, pool_size: int | None = None) -> None:
@@ -104,6 +143,8 @@ def reset_engine(database_url: str | None = None, pool_size: int | None = None) 
         pool_size: Optional pool size (None = NullPool for tests)
     """
     global async_engine, AsyncSessionLocal
+    
+    logger.info("database_engine_reset")
     
     # Dispose the old engine if it exists
     if async_engine:
@@ -120,20 +161,27 @@ def reset_engine(database_url: str | None = None, pool_size: int | None = None) 
         autoflush=False,
         autocommit=False,
     )
+    logger.info("database_engine_reset_complete")
 
 
 @asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Get a database session as an async context manager."""
+    session_id = id(async_engine)
+    logger.debug("database_session_acquired", session_id=session_id)
+    
     async with AsyncSessionLocal() as session:
         try:
             yield session
             await session.commit()
-        except Exception:
+            logger.debug("database_session_committed", session_id=session_id)
+        except Exception as e:
             await session.rollback()
+            logger.error("database_session_rollback", session_id=session_id, error=str(e))
             raise
         finally:
             await session.close()
+            logger.debug("database_session_closed", session_id=session_id)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

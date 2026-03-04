@@ -1,16 +1,43 @@
 """SIMPA configuration management using Pydantic Settings."""
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _get_env_files() -> list[str]:
+    """Get list of env files to load.
+    
+    Loading order (later files override earlier ones):
+    1. ~/.env (user defaults)
+    2. ./.env (project-specific)
+    """
+    env_files = []
+    
+    # User defaults from home directory
+    home_env = Path.home() / ".env"
+    if home_env.exists():
+        env_files.append(str(home_env))
+    
+    # Project-specific .env in current directory
+    local_env = Path(".env")
+    if local_env.exists():
+        env_files.append(str(local_env))
+    
+    # Fallback to default if neither exists
+    if not env_files:
+        env_files = [".env"]
+    
+    return env_files
+
+
 class Settings(BaseSettings):
     """SIMPA service configuration."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_get_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -206,6 +233,12 @@ class Settings(BaseSettings):
     enable_pii_detection: bool = Field(
         default=True,
         description="Enable basic PII detection in prompts",
+    )
+
+    # Project Association
+    require_project_id: bool = Field(
+        default=False,
+        description="Require project_id for all prompt refinement requests",
     )
 
     # Diff Saliency

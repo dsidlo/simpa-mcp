@@ -2,7 +2,6 @@
 
 import hashlib
 import re
-import structlog
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -12,7 +11,7 @@ from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from simpa.config import settings
-from simpa.db.engine import AsyncSessionLocal, get_db_session
+from simpa.db.engine import AsyncSessionLocal
 from simpa.db.repository import (
     ProjectRepository,
     PromptHistoryRepository,
@@ -22,27 +21,10 @@ from simpa.embedding.service import EmbeddingService
 from simpa.llm.service import LLMService
 from simpa.prompts.refiner import PromptRefiner
 from simpa.core.diff_saliency import SalientDiffFilter
+from simpa.utils.logging import get_logger
 
-# Configure structured logging
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer() if settings.json_logging else structlog.dev.ConsoleRenderer(),
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
-
-logger = structlog.get_logger()
+# Get logger - configuration is done in main.py
+logger = get_logger(__name__)
 
 
 # PII Detection & Sanitization
@@ -59,19 +41,19 @@ PII_PATTERNS = {
 
 def sanitize_pii(text: str) -> tuple[str, dict[str, int]]:
     """Detect and sanitize PII in text.
-    
+
     Returns:
         Tuple of (sanitized_text, detected_entities)
     """
     detected = {}
     sanitized = text
-    
+
     for entity_type, pattern in PII_PATTERNS.items():
         matches = re.findall(pattern, text)
         if matches:
             detected[entity_type] = len(matches)
             sanitized = re.sub(pattern, f"[{entity_type.upper()}_REDACTED]", sanitized)
-    
+
     return sanitized, detected
 
 
@@ -79,7 +61,7 @@ def should_block_request(detected: dict[str, int]) -> tuple[bool, str]:
     """Check if request should be blocked due to high-risk PII."""
     high_risk = {"credit_card", "ssn", "api_key", "password", "secret"}
     blocks = set(detected.keys()) & high_risk
-    
+
     if blocks:
         return True, f"High-risk PII detected: {', '.join(blocks)}. Request blocked."
     return False, ""
@@ -101,7 +83,7 @@ class RefinePromptRequest(BaseModel):
     domain: str | None = Field(default=None, max_length=100)
     tags: list[str] | None = Field(default=None, max_length=20)
     project_id: str | None = Field(default=None, description="Optional project ID to associate with this prompt")
-    
+
     @field_validator("agent_type")
     @classmethod
     def validate_agent_type(cls, v: str) -> str:
@@ -119,7 +101,7 @@ class RefinePromptRequest(BaseModel):
             except ValueError:
                 raise ValueError("project_id must be a valid UUID")
         return v
-    
+
     @field_validator("original_prompt")
     @classmethod
     def validate_no_pii(cls, v: str) -> str:
@@ -158,7 +140,7 @@ class UpdatePromptResultsRequest(BaseModel):
     test_passed: bool | None = Field(default=None)
     lint_score: float | None = Field(default=None, ge=0.0, le=1.0)
     security_scan_passed: bool | None = Field(default=None)
-    
+
     @field_validator("prompt_key")
     @classmethod
     def validate_prompt_key(cls, v: str) -> str:
@@ -267,19 +249,19 @@ class ListProjectsResponse(BaseModel):
 async def app_lifespan(server: FastMCP) -> AsyncIterator[dict]:
     """Manage application lifecycle."""
     logger.info("simpa_server_starting")
-    
+
     # Initialize services
     embedding_service = EmbeddingService()
     llm_service = LLMService()
-    
+
     yield {
         "embedding_service": embedding_service,
         "llm_service": llm_service,
     }
-    
+
     # Cleanup
-    await embedding_service.close()
-    await llm_service.close()
+    embedding_service.close()
+    llm_service.close()
     logger.info("simpa_server_stopped")
 
 
@@ -301,9 +283,60 @@ async def refine_prompt(
     Given an original prompt and context, either selects an existing refined prompt
     or creates a new one optimized for the agent type and language.
     
+    **Note:** A project_id is required. If not provided, the response will include
+    a list of existing projects or instructions to create one. The agent should:
+    1. Call list_projects to see available projects, or
+    2. Call create_project to create a new one, then
+    3. Resubmit the refine_prompt request with the project_id
+    
+    Examples:
+        Basic refinement with project:
+        ```json
+        {
+          "request": {
+            "agent_type": "developer",
+            "original_prompt": "Write a Python function to sort a list of integers",
+            "main_language": "python",
+            "project_id": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+        ```
+        
+        With context, tags, and project:
+        ```json
+        {
+          "request": {
+            "agent_type": "architect",
+            "original_prompt": "Design a microservices architecture for an e-commerce platform",
+            "main_language": "python",
+            "other_languages": ["javascript", "sql"],
+            "domain": "backend",
+            "tags": ["microservices", "api", "scalability"],
+            "project_id": "550e8400-e29b-41d4-a716-446655440000",
+            "context": {
+              "scale": "high-traffic",
+              "budget": "moderate",
+              "timeline": "3 months"
+            }
+          }
+        }
+        ```
+        
+        Without project (returns guidance):
+        ```json
+        {
+          "request": {
+            "agent_type": "developer",
+            "original_prompt": "Write a Python function to sort a list of integers"
+          }
+        }
+        ```
+        Response: Contains error message with list of existing projects or
+        instructions to create one using create_project.
+
     Args:
         request: Refinement request with prompt details
-        
+
     Returns:
         Refined or selected prompt with metadata
     """
@@ -314,18 +347,56 @@ async def refine_prompt(
         main_language=request.main_language,
     )
     log.info("refine_prompt_called")
-    
+
     async with AsyncSessionLocal() as session:
         try:
             # Sanitize prompt (log detection but allow through if not high-risk)
             sanitized_prompt, detected_pii = sanitize_pii(request.original_prompt)
             if detected_pii:
                 log.warning("pii_detected", entities=list(detected_pii.keys()))
-            
+
+            # Check for project_id if strictly required via CLI flag
+            if settings.require_project_id and not request.project_id:
+                log.warning("refine_prompt_no_project_id_required")
+                # Get list of existing projects to help the agent
+                project_repo = ProjectRepository(session)
+                projects, _ = await project_repo.list_projects(limit=5)
+                project_list = [
+                    {"project_id": str(p.id), "project_name": p.project_name, "main_language": p.main_language}
+                    for p in projects
+                ]
+
+                if not project_list:
+                    return RefinePromptResponse(
+                        refined_prompt="ERROR: No project_id provided and no projects exist. Please create a project first using create_project, then resubmit your request with the project_id.",
+                        prompt_key=str(uuid.uuid4()),  # Dummy key for error cases
+                        source="new",
+                        action="new",
+                        confidence_score=0.0,
+                        similar_prompts_found=0,
+                        average_score=None,
+                        usage_count=0,
+                    )
+                else:
+                    project_list_text = "\n".join([
+                        f"  - {p['project_name']} (ID: {p['project_id']}, Language: {p.get('main_language', 'N/A')})"
+                        for p in project_list
+                    ])
+                    return RefinePromptResponse(
+                        refined_prompt=f"ERROR: No project_id provided. Please either:\n\n1. Use an existing project from the list below:\n{project_list_text}\n\nOr create a new project using create_project, then resubmit with the project_id.",
+                        prompt_key=str(uuid.uuid4()),  # Dummy key for error cases
+                        source="new",
+                        action="new",
+                        confidence_score=0.0,
+                        similar_prompts_found=0,
+                        average_score=None,
+                        usage_count=0,
+                    )
+
             # Get services from lifespan context
             embedding_service = ctx.request_context.lifespan_context["embedding_service"]
             llm_service = ctx.request_context.lifespan_context["llm_service"]
-            
+
             # Create repository and refiner
             repository = RefinedPromptRepository(session)
             refiner = PromptRefiner(
@@ -333,10 +404,15 @@ async def refine_prompt(
                 embedding_service=embedding_service,
                 llm_service=llm_service,
             )
-            
+
             # Compute hash of original prompt for deduplication
             original_hash = compute_hash(request.original_prompt)
-            
+
+            # Convert project_id to UUID if provided
+            project_uuid = None
+            if request.project_id:
+                project_uuid = uuid.UUID(request.project_id)
+
             # Perform refinement
             result = await refiner.refine(
                 original_prompt=sanitized_prompt,
@@ -347,16 +423,17 @@ async def refine_prompt(
                 tags=request.tags,
                 original_hash=original_hash,
                 context=request.context,
+                project_id=project_uuid,
             )
-            
+
             await session.commit()
-            
+
             log.info(
                 "refine_prompt_completed",
                 source=result["source"],
                 prompt_key=result["prompt_key"],
             )
-            
+
             return RefinePromptResponse(
                 refined_prompt=result["refined_prompt"],
                 prompt_key=result["prompt_key"],
@@ -367,7 +444,7 @@ async def refine_prompt(
                 average_score=result.get("average_score"),
                 usage_count=result.get("usage_count"),
             )
-            
+
         except Exception as e:
             await session.rollback()
             log.error("refine_prompt_failed", error=str(e))
@@ -380,13 +457,44 @@ async def update_prompt_results(
     ctx: Context,
 ) -> UpdatePromptResultsResponse:
     """Update prompt performance metrics after agent execution.
-    
+
     Records the outcome of using a refined prompt and updates
     the prompt's statistics for future refinement decisions.
-    
+
+    Examples:
+        Basic result update:
+        ```json
+        {
+          "request": {
+            "prompt_key": "550e8400-e29b-41d4-a716-446655440000",
+            "action_score": 4.5
+          }
+        }
+        ```
+
+        With detailed execution metrics:
+        ```json
+        {
+          "request": {
+            "prompt_key": "550e8400-e29b-41d4-a716-446655440000",
+            "action_score": 4.5,
+            "executed_by_agent": "claude-3-opus",
+            "execution_duration_ms": 12500,
+            "test_passed": true,
+            "lint_score": 0.95,
+            "security_scan_passed": true,
+            "files_modified": ["src/sorting.py"],
+            "files_added": ["tests/test_sorting.py"],
+            "diffs": {
+              "src/sorting.py": "<diff content here>"
+            }
+          }
+        }
+        ```
+
     Args:
         request: Update request with prompt key and results
-        
+
     Returns:
         Updated statistics
     """
@@ -397,30 +505,30 @@ async def update_prompt_results(
         score=request.action_score,
     )
     log.info("update_result_called")
-    
+
     async with AsyncSessionLocal() as session:
         try:
             # Parse prompt key
             prompt_uuid = uuid.UUID(request.prompt_key)
-            
+
             # Get the prompt
             repository = RefinedPromptRepository(session)
             prompt = await repository.get_by_prompt_key(prompt_uuid)
-            
+
             if not prompt:
                 raise ValueError(f"Prompt not found: {request.prompt_key}")
-            
+
             # Update prompt statistics
             await repository.update_stats(
                 prompt_key=prompt_uuid,
                 score=request.action_score,
             )
-            
+
             # Apply diff saliency filtering
             diff_filter = SalientDiffFilter()
             filtered_diffs = request.diffs or {}
             saliency_metadata = None
-            
+
             if request.diffs:
                 from simpa.embedding.service import EmbeddingService
                 embedding_service = ctx.request_context.lifespan_context["embedding_service"]
@@ -431,7 +539,7 @@ async def update_prompt_results(
                     request.diffs,
                     context_embedding=context_embedding
                 )
-            
+
             # Create history record
             history_repo = PromptHistoryRepository(session)
             await history_repo.create(
@@ -449,24 +557,25 @@ async def update_prompt_results(
                 execution_duration_ms=request.execution_duration_ms,
                 validation_results=request.validation_results,
                 saliency_metadata=saliency_metadata,
+                project_id=prompt.project_id,
             )
-            
+
             await session.commit()
-            
+
             log.info(
                 "update_result_completed",
                 prompt_id=prompt.id,
                 usage_count=prompt.usage_count,
                 average_score=prompt.average_score,
             )
-            
+
             return UpdatePromptResultsResponse(
                 success=True,
                 usage_count=prompt.usage_count,
                 average_score=prompt.average_score,
                 last_used_at=prompt.last_used_at.isoformat() if prompt.last_used_at else None,
             )
-            
+
         except Exception as e:
             await session.rollback()
             log.error("update_result_failed", error=str(e))
@@ -476,9 +585,17 @@ async def update_prompt_results(
 @mcp.tool()
 async def health_check() -> HealthCheckResponse:
     """Health check endpoint.
-    
+
+    Returns the health status of the SIMPA MCP service.
+
+    Examples:
+        Request (no parameters needed):
+        ```json
+        {}
+        ```
+
     Returns:
-        Service health status
+        Service health status with version and timestamp
     """
     return HealthCheckResponse(
         status="healthy",
@@ -494,13 +611,38 @@ async def create_project(
     ctx: Context,
 ) -> CreateProjectResponse:
     """Create a new project for organizing prompts.
-    
+
     Creates a project with language and dependency metadata to enable
     better prompt selection based on project context.
-    
+
+    Examples:
+        Basic project creation:
+        ```json
+        {
+          "request": {
+            "project_name": "web-api",
+            "description": "RESTful API for web application",
+            "main_language": "python"
+          }
+        }
+        ```
+
+        With library dependencies and multiple languages:
+        ```json
+        {
+          "request": {
+            "project_name": "ecommerce-platform",
+            "description": "Microservices-based e-commerce platform with PostgreSQL database",
+            "main_language": "python",
+            "other_languages": ["javascript", "sql", "yaml"],
+            "library_dependencies": ["fastapi", "sqlalchemy", "pydantic", "pytest"]
+          }
+        }
+        ```
+
     Args:
         request: Project creation request
-        
+
     Returns:
         Created project details
     """
@@ -511,7 +653,7 @@ async def create_project(
         main_language=request.main_language,
     )
     log.info("create_project_called")
-    
+
     async with AsyncSessionLocal() as session:
         try:
             # Check for duplicate project name first
@@ -519,14 +661,14 @@ async def create_project(
             existing = await repo.get_by_name(request.project_name)
             if existing:
                 raise ValueError(f"Project with name '{request.project_name}' already exists")
-            
+
             # Sanitize description if provided
             sanitized_description = None
             if request.description:
                 sanitized_description, detected_pii = sanitize_pii(request.description)
                 if detected_pii:
                     log.warning("pii_detected_in_description", entities=list(detected_pii.keys()))
-            
+
             # Create the project
             project = await repo.create(
                 project_name=request.project_name,
@@ -535,21 +677,21 @@ async def create_project(
                 other_languages=request.other_languages,
                 library_dependencies=request.library_dependencies,
             )
-            
+
             await session.commit()
-            
+
             log.info(
                 "create_project_completed",
                 project_id=str(project.id),
             )
-            
+
             return CreateProjectResponse(
                 project_id=str(project.id),
                 project_name=project.project_name,
                 description=project.description,
                 created_at=project.created_at.isoformat(),
             )
-            
+
         except Exception as e:
             await session.rollback()
             log.error("create_project_failed", error=str(e))
@@ -562,10 +704,31 @@ async def get_project(
     ctx: Context,
 ) -> GetProjectResponse:
     """Retrieve project information by ID or name.
-    
+
+    Look up a project by either its ID (UUID) or name.
+
+    Examples:
+        Get by project ID:
+        ```json
+        {
+          "request": {
+            "project_id": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+        ```
+
+        Get by project name:
+        ```json
+        {
+          "request": {
+            "project_name": "web-api"
+          }
+        }
+        ```
+
     Args:
         request: Get project request with project_id or project_name
-        
+
     Returns:
         Project details
     """
@@ -576,11 +739,11 @@ async def get_project(
         project_name=request.project_name,
     )
     log.info("get_project_called")
-    
+
     async with AsyncSessionLocal() as session:
         try:
             repo = ProjectRepository(session)
-            
+
             # Find project by ID or name
             if request.project_id:
                 try:
@@ -590,19 +753,19 @@ async def get_project(
                     raise ValueError("project_id must be a valid UUID")
             else:
                 project = await repo.get_by_name(request.project_name)
-            
+
             if not project:
                 raise ValueError(f"Project not found")
-            
+
             # Count associated prompts
             prompt_count = len(project.prompts) if project.prompts else 0
-            
+
             log.info(
                 "get_project_completed",
                 project_id=str(project.id),
                 prompt_count=prompt_count,
             )
-            
+
             return GetProjectResponse(
                 project_id=str(project.id),
                 project_name=project.project_name,
@@ -614,7 +777,7 @@ async def get_project(
                 project_created_at=project.created_at.isoformat(),
                 project_updated_at=project.updated_at.isoformat() if project.updated_at else None,
             )
-            
+
         except Exception as e:
             log.error("get_project_failed", error=str(e))
             raise
@@ -626,10 +789,32 @@ async def list_projects(
     ctx: Context,
 ) -> ListProjectsResponse:
     """List all projects with optional filtering.
-    
+
+    Retrieves a paginated list of projects, optionally filtered by
+    programming language.
+
+    Examples:
+        List all projects:
+        ```json
+        {
+          "request": {}
+        }
+        ```
+
+        Filter by language with pagination:
+        ```json
+        {
+          "request": {
+            "main_language": "python",
+            "limit": 10,
+            "offset": 0
+          }
+        }
+        ```
+
     Args:
         request: List projects request with optional filters
-        
+
     Returns:
         Paginated list of projects
     """
@@ -641,17 +826,17 @@ async def list_projects(
         offset=request.offset,
     )
     log.info("list_projects_called")
-    
+
     async with AsyncSessionLocal() as session:
         try:
             repo = ProjectRepository(session)
-            
+
             projects, total_count = await repo.list_projects(
                 main_language=request.main_language,
                 limit=request.limit,
                 offset=request.offset,
             )
-            
+
             # Build summaries
             project_summaries = []
             for project in projects:
@@ -664,20 +849,20 @@ async def list_projects(
                         project_created_at=project.created_at.isoformat(),
                     )
                 )
-            
+
             log.info(
                 "list_projects_completed",
                 returned_count=len(project_summaries),
                 total_count=total_count,
             )
-            
+
             return ListProjectsResponse(
                 projects=project_summaries,
                 total_count=total_count,
                 limit=request.limit,
                 offset=request.offset,
             )
-            
+
         except Exception as e:
             log.error("list_projects_failed", error=str(e))
             raise
@@ -685,7 +870,7 @@ async def list_projects(
 
 def main() -> None:
     """Run the MCP server."""
-    mcp.run(transport=settings.mcp_transport)
+    mcp.run(transport=settings.mcp_transport, show_banner=False)
 
 
 if __name__ == "__main__":

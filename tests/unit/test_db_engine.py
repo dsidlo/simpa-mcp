@@ -150,7 +150,6 @@ class TestGetSession:
                 break  # Only iterate once
 
 
-@pytest.mark.asyncio
 class TestSessionFactory:
     """Test AsyncSessionLocal configuration."""
 
