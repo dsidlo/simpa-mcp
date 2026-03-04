@@ -3,7 +3,7 @@
 import hashlib
 import sqlite3
 import structlog
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -96,7 +96,7 @@ class LLMResponseCache:
             response, expires_at_str = row
             expires_at = datetime.fromisoformat(expires_at_str)
             
-            if datetime.utcnow() > expires_at:
+            if datetime.now(timezone.utc) > expires_at:
                 # Expired, delete it
                 conn.execute("DELETE FROM llm_cache WHERE key = ?", (key,))
                 conn.commit()
@@ -122,7 +122,7 @@ class LLMResponseCache:
             return
             
         key = self._compute_key(system_prompt, user_prompt)
-        created_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc)
         expires_at = created_at + timedelta(seconds=self.ttl_seconds)
         
         conn = self._get_connection()
@@ -190,7 +190,7 @@ class LLMResponseCache:
             return 0
             
         conn = self._get_connection()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         
         try:
             cursor = conn.execute(
@@ -235,7 +235,7 @@ class LLMResponseCache:
             return {"enabled": False}
             
         conn = self._get_connection()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         
         try:
             cursor = conn.execute("SELECT COUNT(*) FROM llm_cache")

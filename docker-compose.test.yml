@@ -1,0 +1,75 @@
+# Docker Compose for Testing (alternative ports to avoid local conflicts)
+# PostgreSQL on 5433:5432, Ollama on 11435:11434, MCP on 8001:8000
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: simpa-postgres-test
+    environment:
+      POSTGRES_USER: simpa
+      POSTGRES_PASSWORD: simpa
+      POSTGRES_DB: simpa
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simpa -d simpa"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - simpa-test-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: simpa-ollama-test
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_test_data:/root/.ollama
+    networks:
+      - simpa-test-network
+
+  simpa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: simpa-mcp-test
+    environment:
+      DATABASE_URL: postgresql://simpa:simpa@postgres:5432/simpa
+      EMBEDDING_PROVIDER: ollama
+      EMBEDDING_MODEL: nomic-embed-text
+      EMBEDDING_DIMENSIONS: 768
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_PROVIDER: ollama
+      LLM_MODEL: llama3.2
+      LLM_TEMPERATURE: 0.7
+      MCP_TRANSPORT: stdio
+      MCP_PORT: 8000
+      LOG_LEVEL: DEBUG
+      JSON_LOGGING: false
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - simpa-test-network
+    command: ["python", "-m", "src.main"]
+
+volumes:
+  postgres_test_data:
+    driver: local
+  ollama_test_data:
+    driver: local
+
+networks:
+  simpa-test-network:
+    driver: bridge

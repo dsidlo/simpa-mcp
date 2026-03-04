@@ -69,8 +69,10 @@ Before installing SIMPA, ensure you have the following:
 |-----------|---------|---------|
 | **Python** | 3.10+ | Runtime environment |
 | **PostgreSQL** | 14+ | Database with pgvector extension |
-| **Docker** | Latest | For TestContainers (testing) & PostgreSQL |
+| **Docker** | Latest | Required for running tests with TestContainers |
 | **Git** | Latest | Clone repository |
+
+> **Note:** PostgreSQL and Ollama are expected to be installed and running separately (not via Docker) for normal operation. Docker is only required for the automated test suite.
 
 ### For Ollama (Local Models - Recommended)
 
@@ -99,7 +101,9 @@ Before installing SIMPA, ensure you have the following:
 
 ## 🚀 Quick Start
 
-### Option 1: Docker Compose (Recommended)
+### Option 1: Docker Compose (Recommended for Development/Testing)
+
+This option runs PostgreSQL and Ollama in Docker containers for easy development and testing:
 
 ```bash
 # Clone and setup
@@ -107,7 +111,7 @@ git clone https://github.com/yourusername/simpa-mcp.git
 cd simpa-mcp
 cp .env.example .env
 
-# Start all services
+# Start all services (PostgreSQL + Ollama in Docker)
 make dev-setup
 
 # Download models (one-time)
@@ -120,25 +124,40 @@ make migrate
 make test
 ```
 
-### Option 2: Local Development
+> **For Production Use:** Install PostgreSQL and Ollama directly on your system instead of using Docker. See the Manual Setup section below.
+
+### Option 2: Manual Setup (Production/Existing Services)
+
+Use this if you already have PostgreSQL and Ollama installed locally.
+
+**Prerequisites:**
+- PostgreSQL 14+ with pgvector extension installed
+- Ollama running locally (with `nomic-embed-text` and `llama3.2` pulled)
 
 ```bash
 # Install dependencies
 pip install -e ".[dev]"
 
-# Setup database (requires PostgreSQL + pgvector)
-docker run -d --name simpa-db \
-  -e POSTGRES_USER=simpa \
-  -e POSTGRES_PASSWORD=simpa \
-  -e POSTGRES_DB=simpa \
-  -p 5432:5432 \
-  pgvector/pgvector:pg16
+# Configure environment
+cp .env.example .env
+# Edit .env to match your PostgreSQL and Ollama settings
 
 # Run migrations
 alembic upgrade head
 
 # Start MCP server
 python -m src.main
+```
+
+**Quick PostgreSQL setup with Docker (if needed):**
+```bash
+# Only if you don't have PostgreSQL installed locally
+docker run -d --name simpa-db \
+  -e POSTGRES_USER=simpa \
+  -e POSTGRES_PASSWORD=simpa \
+  -e POSTGRES_DB=simpa \
+  -p 5432:5432 \
+  pgvector/pgvector:pg16
 ```
 
 ## 🔌 Adding SIMPA to Your MCP Configuration
@@ -183,7 +202,7 @@ alembic upgrade head
 # Build the MCP server image
 docker build --target production -t simpa-mcp:latest .
 
-# Or use docker-compose (includes PostgreSQL + pgvector)
+# Or use docker compose (includes PostgreSQL + pgvector)
 docker-compose up -d
 ```
 
@@ -263,6 +282,26 @@ Add SIMPA to your MCP client's configuration file:
 }
 ```
 
+#### Using uv (Recommended)
+
+This configuration ensures the server runs from the source directory and uses uv for dependency management:
+
+```json
+{
+  "mcpServers": {
+    "simpa-mcp": {
+      "command": "/bin/bash",
+      "args": [
+        "-c",
+        "cd /path/to/simpa-mcp && uv run python src/main.py --log-level debug --log-file /tmp/simpa-mcp.log"
+      ]
+    }
+  }
+}
+```
+
+> **Note:** Replace `/path/to/simpa-mcp` with your actual installation path. Using `bash -c` with `cd` ensures the server runs from the project root where `pyproject.toml` and `.env` are located.
+
 ### Step 3: Install MCP Inspector (Optional, for Testing)
 
 ```bash
@@ -334,6 +373,54 @@ LLM_TEMPERATURE=0.7
 
 # MCP Server
 MCP_TRANSPORT=stdio
+```
+
+### Command Line Options
+
+SIMPA supports several command line flags for runtime configuration:
+
+```bash
+# Show all available options
+python -m src.main --help
+
+# Common options
+--transport {stdio,sse}     # MCP transport protocol (default: stdio)
+--log-level {debug,info,warn,error,fatal}  # Logging level (default: info)
+--log-file PATH             # Path to log file (default: /tmp/simpa-mcp.log)
+--log-console               # Also log to console (stderr)
+--init-db                   # Initialize database and exit
+```
+
+#### Project-Associated Prompt Development (`--project-id-required`)
+
+Enable **strict project association mode** to enforce that all prompts must be linked to a project:
+
+```bash
+# Require project_id for all prompt refinements
+python -m src.main --project-id-required
+```
+
+When enabled, calling `refine_prompt` without a `project_id` returns a helpful response guiding the agent to:
+1. **List existing projects** - View available projects to find a suitable match
+2. **Create a new project** - Use `create_project` if no suitable project exists
+3. **Resubmit with project_id** - Retry the refinement with the chosen project
+
+**Why use project association?**
+
+- **Cross-project learning**: Prompts refined for one Python web project can benefit similar Flask/Django projects
+- **Knowledge clustering**: Projects with similar tech stacks (React+Node, Python+PostgreSQL) share prompt patterns
+- **Relevance scoring**: Prompt selection considers project context for better matches
+- **Team organization**: Different teams/projects have distinct prompt preferences and patterns
+
+**Example workflow:**
+```bash
+# Start server with strict project mode
+python -m src.main --project-id-required
+
+# Agent workflow:
+# 1. First call without project_id → returns list of existing projects
+# 2. Agent picks or creates project → gets project_id
+# 3. Resubmit with project_id → prompt is refined and associated with project
 ```
 
 ## 🛠️ MCP Tools
@@ -465,6 +552,27 @@ alembic downgrade -1
 ```
 
 ## 🐳 Docker
+
+> **Note:** Docker is primarily used for **testing** SIMPA in an isolated environment. It can also be used as an alternative to installing PostgreSQL directly on your machine during development.
+>
+> For production deployments, you may prefer running SIMPA directly with your existing PostgreSQL instance rather than containerizing both services.
+
+### Quick Start with Docker Compose (Testing)
+
+The easiest way to test SIMPA without installing PostgreSQL locally:
+
+```bash
+# Start PostgreSQL with pgvector in Docker
+docker-compose up -d postgres
+
+# Initialize the database
+python -m src.main --init-db
+
+# Run the MCP server
+python -m src.main
+```
+
+This uses the `docker-compose.test.yml` which only starts the PostgreSQL service—SAMPA runs natively on your machine using the containerized database.
 
 ### Production Deployment
 
