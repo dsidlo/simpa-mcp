@@ -3,6 +3,7 @@
 import difflib
 import hashlib
 import structlog
+import uuid
 from typing import TYPE_CHECKING
 
 from simpa.config import settings
@@ -222,6 +223,7 @@ class PromptRefiner:
         tags: list[str] | None = None,
         original_hash: str | None = None,
         context: dict | None = None,
+        project_id: uuid.UUID | None = None,
     ) -> dict:
         """Refine a prompt or select an existing one with optimizations.
 
@@ -234,6 +236,7 @@ class PromptRefiner:
             tags: Tags for categorization
             original_hash: Hash of the original prompt
             context: Additional context
+            project_id: Optional project ID to associate with this prompt
 
         Returns:
             Dict with refinement results
@@ -340,6 +343,7 @@ class PromptRefiner:
             tags=tags,
             original_prompt_hash=original_hash,
             prior_refinement_id=prior_refinement_id,
+            project_id=project_id,
         )
 
         logger.info(

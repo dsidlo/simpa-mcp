@@ -30,6 +30,7 @@ class RefinedPromptRepository:
         prior_refinement_id: int | None = None,
         original_prompt_hash: str | None = None,
         refinement_version: int = 1,
+        project_id: uuid.UUID | None = None,
     ) -> RefinedPrompt:
         """Create a new refined prompt record."""
         prompt = RefinedPrompt(
@@ -44,6 +45,7 @@ class RefinedPromptRepository:
             prior_refinement_id=prior_refinement_id,
             original_prompt_hash=original_prompt_hash,
             refinement_version=refinement_version,
+            project_id=project_id,
         )
         # Increment refinement version if this is a refinement of an existing prompt
         if prior_refinement_id:
@@ -413,6 +415,7 @@ class PromptHistoryRepository:
         agent_output_summary: str | None = None,
         validation_results: dict[str, Any] | None = None,
         saliency_metadata: dict[str, Any] | None = None,
+        project_id: uuid.UUID | None = None,
     ) -> PromptHistory:
         """Create a new prompt history record with saliency metadata."""
         history = PromptHistory(
@@ -431,6 +434,7 @@ class PromptHistoryRepository:
             agent_output_summary=agent_output_summary,
             validation_results=validation_results,
             saliency_metadata=saliency_metadata,
+            project_id=project_id,
         )
         self.session.add(history)
         await self.session.flush()

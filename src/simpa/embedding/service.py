@@ -1,15 +1,16 @@
 """Embedding service for generating text embeddings with LRU caching using LiteLLM."""
 
 import hashlib
-import structlog
 import warnings
 from collections import OrderedDict
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 import litellm
-from simpa.config import settings
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-logger = structlog.get_logger()
+from simpa.config import settings
+from simpa.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class EmbeddingCache:
@@ -20,6 +21,7 @@ class EmbeddingCache:
         self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._hits = 0
         self._misses = 0
+        logger.debug("embedding_cache_initialized", max_size=max_size)
 
     def get(self, text_hash: str) -> list[float] | None:
         """Get cached embedding.
@@ -35,8 +37,10 @@ class EmbeddingCache:
             embedding = self._cache.pop(text_hash)
             self._cache[text_hash] = embedding
             self._hits += 1
+            logger.debug("embedding_cache_hit", text_hash=text_hash[:16])
             return embedding
         self._misses += 1
+        logger.debug("embedding_cache_miss", text_hash=text_hash[:16])
         return None
 
     def set(self, text_hash: str, embedding: list[float]) -> None:
@@ -49,17 +53,26 @@ class EmbeddingCache:
         if text_hash in self._cache:
             # Remove old entry
             del self._cache[text_hash]
+            logger.debug("embedding_cache_updated", text_hash=text_hash[:16])
         elif len(self._cache) >= self.max_size:
             # Remove oldest entry
-            self._cache.popitem(last=False)
+            removed_hash, _ = self._cache.popitem(last=False)
+            logger.debug("embedding_cache_evicted", removed_hash=removed_hash[:16])
         
         self._cache[text_hash] = embedding
+        logger.debug(
+            "embedding_cache_set",
+            text_hash=text_hash[:16],
+            cache_size=len(self._cache),
+        )
 
     def clear(self) -> None:
         """Clear all cached entries."""
+        size_before = len(self._cache)
         self._cache.clear()
         self._hits = 0
         self._misses = 0
+        logger.info("embedding_cache_cleared", entries_removed=size_before)
 
     def stats(self) -> dict:
         """Get cache statistics."""
@@ -82,10 +95,36 @@ class EmbeddingService:
         self.model = f"{settings.embedding_provider}/{settings.embedding_model}"
         self.dimensions = settings.embedding_dimensions
         
+        # Get Ollama base URL for embeddings if using ollama
+        if settings.embedding_provider == "ollama":
+            self.ollama_base_url = settings.ollama_base_url
+            litellm.set_verbose = False
+            logger.info(
+                "embedding_service_initialized",
+                provider=settings.embedding_provider,
+                model=settings.embedding_model,
+                ollama_base_url=self.ollama_base_url,
+                dimensions=self.dimensions,
+            )
+        else:
+            logger.info(
+                "embedding_service_initialized",
+                provider=settings.embedding_provider,
+                model=settings.embedding_model,
+                dimensions=self.dimensions,
+            )
+        
         # Initialize cache
         self.cache_enabled = settings.embedding_cache_enabled
         self.cache_max_text_length = settings.embedding_cache_max_text_length
         self._cache = EmbeddingCache(max_size=settings.embedding_cache_max_size)
+        
+        logger.debug(
+            "embedding_cache_config",
+            enabled=self.cache_enabled,
+            max_text_length=self.cache_max_text_length,
+            max_entries=settings.embedding_cache_max_size,
+        )
 
     def _compute_hash(self, text: str) -> str:
         """Compute hash for cache key."""
@@ -101,8 +140,14 @@ class EmbeddingService:
             True if should cache
         """
         if not self.cache_enabled:
+            logger.debug("embedding_cache_skip_disabled")
             return False
         if len(text) > self.cache_max_text_length:
+            logger.debug(
+                "embedding_cache_skip_too_long",
+                text_length=len(text),
+                max_length=self.cache_max_text_length,
+            )
             return False
         return True
 
@@ -121,6 +166,8 @@ class EmbeddingService:
         Returns:
             List of float values (embedding vector)
         """
+        logger.debug("embedding_request", text_length=len(text), model=self.model)
+        
         # Check cache
         cache_hit = False
         if self._should_cache(text):
@@ -128,40 +175,68 @@ class EmbeddingService:
             cached = self._cache.get(text_hash)
             if cached is not None:
                 cache_hit = True
-                logger.debug("embedding_cache_hit", text_length=len(text))
+                logger.info(
+                    "embedding_cache_hit",
+                    text_length=len(text),
+                    text_hash=text_hash[:16],
+                )
                 return cached
 
         # Generate embedding using LiteLLM
         try:
-            response = await litellm.aembedding(
-                model=self.model,
-                input=text,
-                dimensions=self.dimensions,
-            )
+            logger.debug("embedding_api_call", model=self.model, text_length=len(text))
+            
+            # For Ollama, pass base_url
+            kwargs = {
+                "model": self.model,
+                "input": text,
+                "dimensions": self.dimensions,
+            }
+            if settings.embedding_provider == "ollama":
+                kwargs["api_base"] = self.ollama_base_url
+            
+            response = await litellm.aembedding(**kwargs)
             
             embedding = response.data[0].get("embedding", [])
+            logger.debug(
+                "embedding_api_success",
+                model=self.model,
+                text_length=len(text),
+                embedding_dimensions=len(embedding),
+            )
             
         except Exception as e:
-            logger.error("embedding_failed", error=str(e), model=self.model)
+            logger.error(
+                "embedding_api_failed",
+                error=str(e),
+                model=self.model,
+                text_length=len(text),
+                exc_info=True,
+            )
             raise RuntimeError(f"Embedding generation failed: {e}") from e
 
         # Validate embedding dimensions
         if len(embedding) != self.dimensions:
-            warnings.warn(
-                f"Embedding dimension mismatch: expected {self.dimensions}, got {len(embedding)}",
-                UserWarning,
-            )
             logger.warning(
                 "embedding_dimension_mismatch",
                 expected=self.dimensions,
                 actual=len(embedding),
+                model=self.model,
+            )
+            warnings.warn(
+                f"Embedding dimension mismatch: expected {self.dimensions}, got {len(embedding)}",
+                UserWarning,
             )
 
         # Cache the result
         if not cache_hit and self._should_cache(text):
             text_hash = self._compute_hash(text)
             self._cache.set(text_hash, embedding)
-            logger.debug("embedding_cached", text_length=len(text))
+            logger.debug(
+                "embedding_cached",
+                text_length=len(text),
+                text_hash=text_hash[:16],
+            )
 
         return embedding
 
@@ -174,22 +249,38 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
+        logger.info("embedding_batch_request", count=len(texts))
+        
         # Process individually (LiteLLM handles batching internally for supported providers)
         results = []
-        for text in texts:
-            embedding = await self.embed(text)
-            results.append(embedding)
+        for i, text in enumerate(texts):
+            try:
+                embedding = await self.embed(text)
+                results.append(embedding)
+            except Exception as e:
+                logger.error(
+                    "embedding_batch_item_failed",
+                    index=i,
+                    text_length=len(text),
+                    error=str(e),
+                )
+                raise
+        
+        logger.info("embedding_batch_complete", count=len(results))
         return results
 
     def get_cache_stats(self) -> dict:
         """Get cache statistics."""
-        return self._cache.stats()
+        stats = self._cache.stats()
+        logger.info("embedding_cache_stats", **stats)
+        return stats
 
     def clear_cache(self) -> None:
         """Clear the embedding cache."""
         self._cache.clear()
-        logger.info("embedding_cache_cleared")
 
     def close(self) -> None:
         """Close the service and cleanup resources."""
+        logger.info("embedding_service_closing")
         self._cache.clear()
+        logger.info("embedding_service_closed")
