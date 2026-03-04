@@ -42,6 +42,15 @@ class TestRefinePromptTool:
             "embedding_service"
         ].embed.return_value = sample_embedding
         
+        # Mock LLM service for validation calls - return "appropriate" for reuse test
+        # First calls are for validation (bypass + selector), last call is for refinement if needed
+        mock_context.request_context.lifespan_context[
+            "llm_service"
+        ].complete.side_effect = [
+            "APPROPRIATE: yes\nREASON: prompts match the request",  # bypass validation
+            "APPROPRIATE: yes\nREASON: appropriate for request",    # selector validation
+        ]
+        
         # Request
         request = RefinePromptRequest(
             original_prompt="Write a Python function",
