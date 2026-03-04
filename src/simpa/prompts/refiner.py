@@ -504,6 +504,7 @@ REASON: one-sentence explanation
             original_prompt_hash=original_hash,
             prior_refinement_id=prior_refinement_id,
             project_id=project_id,
+            refinement_type="sigmoid",
         )
 
         logger.info(

@@ -31,6 +31,7 @@ class RefinedPromptRepository:
         original_prompt_hash: str | None = None,
         refinement_version: int = 1,
         project_id: uuid.UUID | None = None,
+        refinement_type: str = "sigmoid",
     ) -> RefinedPrompt:
         """Create a new refined prompt record."""
         prompt = RefinedPrompt(
@@ -46,6 +47,7 @@ class RefinedPromptRepository:
             original_prompt_hash=original_prompt_hash,
             refinement_version=refinement_version,
             project_id=project_id,
+            refinement_type=refinement_type,
         )
         # Increment refinement version if this is a refinement of an existing prompt
         if prior_refinement_id:
