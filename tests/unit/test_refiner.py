@@ -95,10 +95,13 @@ class TestPromptRefinerRefine:
         """Test reusing an existing high-quality prompt."""
         mock_repo = MagicMock()
         mock_repo.find_similar = AsyncMock(return_value=[])
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
 
         mock_llm = AsyncMock()
+        # Mock validation to return "appropriate" for reuse test
+        mock_llm.complete.return_value = "APPROPRIATE: yes\nREASON: appropriate for request"
 
         refiner = PromptRefiner(mock_repo, mock_embedding, mock_llm)
 
@@ -129,6 +132,7 @@ class TestPromptRefinerRefine:
         mock_repo = MagicMock()
         mock_repo.find_similar = AsyncMock(return_value=[])
         mock_repo.create = AsyncMock()
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
 
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
@@ -157,6 +161,7 @@ class TestPromptRefinerRefine:
         mock_repo = MagicMock()
         mock_repo.find_similar = AsyncMock(return_value=[])
         mock_repo.create = AsyncMock()
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
 
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
@@ -183,10 +188,13 @@ class TestPromptRefinerRefine:
         """Test that embedding text is composed correctly."""
         mock_repo = MagicMock()
         mock_repo.find_similar = AsyncMock(return_value=[])
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
 
         mock_llm = AsyncMock()
+        # Mock validation to return "appropriate"
+        mock_llm.complete.return_value = "APPROPRIATE: yes\nREASON: appropriate"
 
         refiner = PromptRefiner(mock_repo, mock_embedding, mock_llm)
 
@@ -216,6 +224,7 @@ class TestPromptRefinerRefine:
         mock_repo = MagicMock()
         mock_repo.find_similar = AsyncMock(return_value=[])
         mock_repo.create = AsyncMock()
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
 
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
@@ -256,6 +265,7 @@ class TestPromptRefinerWithRepository:
         mock_repo = MagicMock()
         mock_repo.find_similar = AsyncMock(return_value=[])
         mock_repo.create = AsyncMock()
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
 
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
@@ -290,6 +300,7 @@ class TestPromptRefinerLLMContext:
         mock_repo = MagicMock()
         mock_repo.find_similar = AsyncMock(return_value=[])
         mock_repo.create = AsyncMock()
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
 
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768

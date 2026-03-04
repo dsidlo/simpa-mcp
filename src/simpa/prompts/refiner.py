@@ -20,27 +20,33 @@ logger = structlog.get_logger()
 
 REFINEMENT_SYSTEM_PROMPT = """You are an expert prompt engineer specializing in refining prompts for AI agents.
 
+CRITICAL RULE - CONTEXTUAL TAILORING:
+If the original request has a SPECIFIC TARGET (e.g., "DT-Worker" vs "DT-Manager", "frontend" vs "backend", "React" vs "Vue"), you MUST create a prompt that is TAILORED for that SPECIFIC TARGET. Do NOT return a generic template with a note to "adapt" or "change" it. Make the prompt immediately usable for the specific target.
+
+Examples of proper contextual tailoring:
+- WRONG: Generic script + note saying "change DT-Manager to DT-Worker where appropriate"
+- RIGHT: Script explicitly using DT-Worker roles, DT-Worker context, DT-Worker examples
+
 Your task is to analyze the provided agent request and either:
-1. Select the most appropriate existing refined prompt from examples
-2. Create a new refined prompt that improves upon existing examples
+1. Select the most appropriate existing refined prompt if it's EXACTLY appropriate for the context
+2. Create a NEW refined prompt that is TAILORED to the SPECIFIC context
 
 Guidelines for refinement:
-- Make the prompt more specific and actionable
-- Include relevant context from coding/testing/security policies if applicable
+- Make the prompt specific and immediately usable (no adaptation needed)
+- Replace generic references with the SPECIFIC target mentioned in the request
+- Include examples relevant to the SPECIFIC target context
 - Structure the prompt with clear sections (context, task, constraints, output format)
 - Ensure the prompt guides the agent to complete the task in one shot
-- Add examples or templates where helpful
+- Add relevant examples and templates for the SPECIFIC target
 - Add comments explaining key decisions
-
-If you decide to create a new refined prompt, explain your reasoning briefly.
 
 Respond in the following format:
 
 REFINED_PROMPT:
-[The refined prompt text]
+[The refined prompt text - tailored for the specific target]
 
 REASONING:
-[Your reasoning for the refinement]
+[Your reasoning for the refinement - explain how you tailored it for the specific context]
 """
 
 
@@ -121,7 +127,6 @@ class PromptRefiner:
             return None
         
         # Get the first (most similar) that meets the threshold
-        cutoff = 1.0 - threshold  # Convert to distance
         best = similar_prompts[0]
         
         # Check if best is very similar and has high score
@@ -134,6 +139,113 @@ class PromptRefiner:
                 score=best.average_score,
             )
             return best
+        
+        return None
+
+    async def _validate_prompt_appropriateness(
+        self,
+        candidate_prompt: RefinedPrompt,
+        original_request: str,
+        agent_type: str,
+    ) -> tuple[bool, str]:
+        """Validate if a candidate prompt is appropriate for the original request.
+        
+        Uses LLM to determine if the candidate prompt is contextually appropriate
+        for the specific request, or if it needs modifications.
+        
+        Args:
+            candidate_prompt: The prompt to validate
+            original_request: The original user request
+            agent_type: The agent type
+            
+        Returns:
+            Tuple of (is_appropriate, reason)
+        """
+        validation_prompt = f"""Validate if a refined prompt is appropriate for an original request.
+
+Original Request:
+---
+{original_request}
+---
+
+Agent Type: {agent_type}
+
+Candidate Refined Prompt:
+---
+{candidate_prompt.refined_prompt}
+---
+
+Task: Determine if the candidate refined prompt is specifically tailored for the original request,
+or if it would need significant modifications to be appropriate.
+
+Key Questions:
+1. Does the refined prompt address the SPECIFIC TARGET mentioned in the request?
+2. Are there any placeholders or notes suggesting the user needs to modify it?
+3. Is the content immediately usable without changes?
+
+Respond in this exact format:
+APPROPRIATE: yes|no
+REASON: one-sentence explanation
+"""
+        
+        try:
+            response = await self.llm.complete(
+                system_prompt="You are a validation assistant. Be strict about specificity.",
+                user_prompt=validation_prompt,
+            )
+            
+            response_lower = response.lower()
+            is_appropriate = "appropriate: yes" in response_lower
+            
+            # Extract reason
+            reason = ""
+            if "reason:" in response_lower:
+                try:
+                    reason_part = response.split("reason:", 1)[1].strip()
+                    reason = reason_part.split("\n")[0].strip()
+                except IndexError:
+                    reason = ""
+            
+            logger.info(
+                "validation_result",
+                is_appropriate=is_appropriate,
+                reason=reason,
+                candidate_prompt_id=str(candidate_prompt.prompt_key),
+            )
+            
+            return is_appropriate, reason
+            
+        except Exception as e:
+            logger.error("validation_failed", error=str(e))
+            # If validation fails, be conservative and don't reuse
+            return False, "validation failed"
+
+    async def _check_exact_refined_match(
+        self,
+        refined_text: str,
+    ) -> RefinedPrompt | None:
+        """Check if exact refined prompt text already exists.
+        
+        Uses MD5 hash index for efficient exact matching.
+        Prevents storing duplicate refined prompts.
+        
+        Args:
+            refined_text: The refined prompt text to check
+            
+        Returns:
+            Existing RefinedPrompt if exact match found, None otherwise
+        """
+        try:
+            existing = await self.repository.get_by_refined_text_hash(refined_text)
+            if existing:
+                logger.info(
+                    "exact_refined_match_found",
+                    prompt_id=str(existing.prompt_key),
+                    agent_type=existing.agent_type,
+                )
+                return existing
+        except Exception as e:
+            logger.error("exact_match_check_failed", error=str(e))
         
         return None
 
@@ -273,42 +385,71 @@ class PromptRefiner:
             settings.similarity_bypass_threshold
         )
         if bypass_candidate:
-            # Skip selector check - very high confidence
-            logger.info(
-                "reusing_existing_prompt_bypass",
-                prompt_id=str(bypass_candidate.prompt_key),
-                score=bypass_candidate.average_score,
+            # Validate even high-similarity candidates for contextual appropriateness
+            is_appropriate, validation_reason = await self._validate_prompt_appropriateness(
+                bypass_candidate,
+                original_prompt,
+                agent_type,
             )
-            return {
-                "action": "reuse",
-                "prompt_key": str(bypass_candidate.prompt_key),
-                "refined_prompt": bypass_candidate.refined_prompt,
-                "source": "reused",
-                "similar_prompts_found": len(similar_prompts),
-                "average_score": bypass_candidate.average_score,
-                "usage_count": bypass_candidate.usage_count,
-                "confidence_score": bypass_candidate.average_score / 5.0,
-                "bypass_reason": "high_similarity_score",
-            }
+            
+            if is_appropriate:
+                logger.info(
+                    "reusing_existing_prompt_bypass",
+                    prompt_id=str(bypass_candidate.prompt_key),
+                    score=bypass_candidate.average_score,
+                )
+                return {
+                    "action": "reuse",
+                    "prompt_key": str(bypass_candidate.prompt_key),
+                    "refined_prompt": bypass_candidate.refined_prompt,
+                    "source": "reused",
+                    "similar_prompts_found": len(similar_prompts),
+                    "average_score": bypass_candidate.average_score,
+                    "usage_count": bypass_candidate.usage_count,
+                    "confidence_score": bypass_candidate.average_score / 5.0,
+                    "bypass_reason": "high_similarity_score",
+                }
+            else:
+                logger.info(
+                    "bypass_rejected_not_appropriate",
+                    prompt_id=str(bypass_candidate.prompt_key),
+                    reason=validation_reason,
+                )
 
         # PHASE 6: Decide whether to refine or reuse (selector logic)
         if not self.selector.should_create_new_prompt(best_prompt):
-            # Reuse existing prompt
-            logger.info(
-                "reusing_existing_prompt",
-                prompt_id=str(best_prompt.prompt_key),
-                score=best_prompt.average_score,
+            # Validate the candidate before reuse
+            is_appropriate, validation_reason = await self._validate_prompt_appropriateness(
+                best_prompt,
+                original_prompt,
+                agent_type,
             )
-            return {
-                "action": "reuse",
-                "prompt_key": str(best_prompt.prompt_key),
-                "refined_prompt": best_prompt.refined_prompt,
-                "source": "reused",
-                "similar_prompts_found": len(similar_prompts),
-                "average_score": best_prompt.average_score,
-                "usage_count": best_prompt.usage_count,
-                "confidence_score": best_prompt.average_score / 5.0,
-            }
+            
+            if is_appropriate:
+                # Reuse existing prompt
+                logger.info(
+                    "reusing_existing_prompt",
+                    prompt_id=str(best_prompt.prompt_key),
+                    score=best_prompt.average_score,
+                )
+                return {
+                    "action": "reuse",
+                    "prompt_key": str(best_prompt.prompt_key),
+                    "refined_prompt": best_prompt.refined_prompt,
+                    "source": "reused",
+                    "similar_prompts_found": len(similar_prompts),
+                    "average_score": best_prompt.average_score,
+                    "usage_count": best_prompt.usage_count,
+                    "confidence_score": best_prompt.average_score / 5.0,
+                }
+            else:
+                logger.info(
+                    "selector_reused_rejected_not_appropriate",
+                    prompt_id=str(best_prompt.prompt_key),
+                    reason=validation_reason,
+                )
+                # Continue to create new tailored prompt
+                # Will use best_prompt as prior_refinement_id
 
         # PHASE 7: Build context and call LLM (LAZY EVALUATION)
         # Only build context if we're going to call LLM
@@ -329,7 +470,26 @@ class PromptRefiner:
         # Parse the response to extract refined prompt
         refined_text = self._parse_refinement(llm_response)
 
-        # PHASE 8: Store the new refined prompt
+        # PHASE 8a: Check for exact refined text match (prevent duplicates)
+        exact_match = await self._check_exact_refined_match(refined_text)
+        if exact_match:
+            logger.info(
+                "returning_existing_exact_match",
+                prompt_id=str(exact_match.prompt_key),
+            )
+            return {
+                "action": "reuse",
+                "prompt_key": str(exact_match.prompt_key),
+                "refined_prompt": exact_match.refined_prompt,
+                "source": "reused",
+                "similar_prompts_found": len(similar_prompts),
+                "average_score": exact_match.average_score,
+                "usage_count": exact_match.usage_count,
+                "confidence_score": exact_match.average_score / 5.0,
+                "match_type": "exact_refined_text",
+            }
+
+        # PHASE 8b: Store the new refined prompt with prior refinement chain
         prior_refinement_id = best_prompt.id if best_prompt else None
 
         new_prompt = await self.repository.create(

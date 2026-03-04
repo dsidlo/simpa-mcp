@@ -180,6 +180,33 @@ class RefinedPromptRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_refined_text_hash(
+        self,
+        refined_text: str,
+    ) -> RefinedPrompt | None:
+        """Find exact match by refined prompt text using MD5 hash.
+        
+        Uses the functional MD5 hash index for O(1) exact matching.
+        This prevents storing duplicate refined prompts.
+        
+        Args:
+            refined_text: The exact refined prompt text to match
+            
+        Returns:
+            Matching RefinedPrompt or None if not found
+        """
+        from sqlalchemy import func
+        
+        result = await self.session.execute(
+            select(RefinedPrompt)
+            .where(
+                func.md5(RefinedPrompt.refined_prompt) == func.md5(refined_text)
+            )
+            .where(RefinedPrompt.is_active == True)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_best_for_agent(
         self,
         agent_type: str,
