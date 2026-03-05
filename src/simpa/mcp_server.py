@@ -244,6 +244,51 @@ class ListProjectsResponse(BaseModel):
     offset: int
 
 
+# Prompt Activation/Deactivation Models
+class ActivatePromptRequest(BaseModel):
+    """Request to activate a prompt."""
+    prompt_key: str
+
+    @field_validator("prompt_key")
+    @classmethod
+    def validate_prompt_key(cls, v: str) -> str:
+        try:
+            uuid.UUID(v)
+        except ValueError:
+            raise ValueError("prompt_key must be a valid UUID")
+        return v
+
+
+class ActivatePromptResponse(BaseModel):
+    """Response from activating a prompt."""
+    success: bool
+    prompt_key: str
+    is_active: bool
+    message: str
+
+
+class DeactivatePromptRequest(BaseModel):
+    """Request to deactivate a prompt."""
+    prompt_key: str
+
+    @field_validator("prompt_key")
+    @classmethod
+    def validate_prompt_key(cls, v: str) -> str:
+        try:
+            uuid.UUID(v)
+        except ValueError:
+            raise ValueError("prompt_key must be a valid UUID")
+        return v
+
+
+class DeactivatePromptResponse(BaseModel):
+    """Response from deactivating a prompt."""
+    success: bool
+    prompt_key: str
+    is_active: bool
+    message: str
+
+
 # Lifespan context for MCP server
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[dict]:
@@ -865,6 +910,158 @@ async def list_projects(
 
         except Exception as e:
             log.error("list_projects_failed", error=str(e))
+            raise
+
+
+@mcp.tool()
+async def activate_prompt(
+    request: ActivatePromptRequest,
+    ctx: Context,
+) -> ActivatePromptResponse:
+    """Activate a previously deactivated prompt.
+
+    Reactivates a prompt so it can be used in future refinement searches.
+
+    Examples:
+        Activate a prompt by key:
+        ```json
+        {
+          "request": {
+            "prompt_key": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+        ```
+
+    Args:
+        request: Activate request with prompt key
+
+    Returns:
+        Activation result with success status
+    """
+    trace_id = str(uuid.uuid4())
+    log = logger.bind(
+        trace_id=trace_id,
+        prompt_key=request.prompt_key,
+    )
+    log.info("activate_prompt_called")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            # Parse prompt key
+            prompt_uuid = uuid.UUID(request.prompt_key)
+
+            # Get the prompt
+            repository = RefinedPromptRepository(session)
+            prompt = await repository.get_by_prompt_key(prompt_uuid)
+
+            if not prompt:
+                raise ValueError(f"Prompt not found: {request.prompt_key}")
+
+            # Activate the prompt
+            if prompt.is_active:
+                return ActivatePromptResponse(
+                    success=True,
+                    prompt_key=request.prompt_key,
+                    is_active=True,
+                    message="Prompt was already active",
+                )
+
+            prompt.is_active = True
+            await session.flush()
+            await session.commit()
+
+            log.info(
+                "activate_prompt_completed",
+                prompt_id=str(prompt.id),
+            )
+
+            return ActivatePromptResponse(
+                success=True,
+                prompt_key=request.prompt_key,
+                is_active=True,
+                message="Prompt activated successfully",
+            )
+
+        except Exception as e:
+            await session.rollback()
+            log.error("activate_prompt_failed", error=str(e))
+            raise
+
+
+@mcp.tool()
+async def deactivate_prompt(
+    request: DeactivatePromptRequest,
+    ctx: Context,
+) -> DeactivatePromptResponse:
+    """Deactivate a prompt so it won't be used in searches.
+
+    Soft-deletes a prompt by marking it as inactive. The prompt remains
+    in the database but won't appear in search results or be used for
+    finding similar prompts.
+
+    Examples:
+        Deactivate a prompt by key:
+        ```json
+        {
+          "request": {
+            "prompt_key": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+        ```
+
+    Args:
+        request: Deactivate request with prompt key
+
+    Returns:
+        Deactivation result with success status
+    """
+    trace_id = str(uuid.uuid4())
+    log = logger.bind(
+        trace_id=trace_id,
+        prompt_key=request.prompt_key,
+    )
+    log.info("deactivate_prompt_called")
+
+    async with AsyncSessionLocal() as session:
+        try:
+            # Parse prompt key
+            prompt_uuid = uuid.UUID(request.prompt_key)
+
+            # Get the prompt
+            repository = RefinedPromptRepository(session)
+            prompt = await repository.get_by_prompt_key(prompt_uuid)
+
+            if not prompt:
+                raise ValueError(f"Prompt not found: {request.prompt_key}")
+
+            # Deactivate the prompt
+            if not prompt.is_active:
+                return DeactivatePromptResponse(
+                    success=True,
+                    prompt_key=request.prompt_key,
+                    is_active=False,
+                    message="Prompt was already inactive",
+                )
+
+            prompt.is_active = False
+            await session.flush()
+            await session.commit()
+
+            log.info(
+                "deactivate_prompt_completed",
+                prompt_id=str(prompt.id),
+            )
+
+            return DeactivatePromptResponse(
+                success=True,
+                prompt_key=request.prompt_key,
+                is_active=False,
+                message="Prompt deactivated successfully",
+            )
+
+        except Exception as e:
+            await session.rollback()
+            log.error("deactivate_prompt_failed", error=str(e))
             raise
 
 

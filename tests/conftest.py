@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -45,7 +46,7 @@ def test_settings() -> Settings:
 
 
 @pytest_asyncio.fixture(scope="session")
-async def postgres_container() -> AsyncGenerator[PostgresContainer, None]:
+async def postgres_container(request) -> PostgresContainer:
     """Start PostgreSQL container with pgvector for tests."""
     # Skip if Docker is not available
     try:
@@ -58,7 +59,7 @@ async def postgres_container() -> AsyncGenerator[PostgresContainer, None]:
         )
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         pytest.skip("Docker not available - skipping DB tests", allow_module_level=True)
-        return
+        return None  # type: ignore
     
     # Use official pgvector image
     container = PostgresContainer(
@@ -73,9 +74,12 @@ async def postgres_container() -> AsyncGenerator[PostgresContainer, None]:
     import time
     time.sleep(3)  # Give more time for container startup
     
-    yield container
+    # Use addfinalizer for cleanup to avoid async generator issues
+    def cleanup():
+        container.stop()
+    request.addfinalizer(cleanup)
     
-    container.stop()
+    return container
 
 
 # Module-level cache for container URL to avoid recreating per test
@@ -96,6 +100,11 @@ def postgres_url(postgres_container: PostgresContainer) -> str:
 @pytest_asyncio.fixture
 async def db_engine(postgres_url: str):
     """Create async SQLAlchemy engine - function scoped for event loop isolation."""
+    # Disable hybrid search for tests to avoid BM25 stored procedure dependencies
+    import simpa.config
+    original_hybrid_setting = getattr(simpa.config.settings, 'hybrid_search_enabled', True)
+    simpa.config.settings.hybrid_search_enabled = False
+    
     engine = create_async_engine(
         postgres_url,
         echo=False,
@@ -121,6 +130,9 @@ async def db_engine(postgres_url: str):
     
     # Cleanup immediately after test
     await engine.dispose()
+    
+    # Restore hybrid search setting
+    simpa.config.settings.hybrid_search_enabled = original_hybrid_setting
 
 
 @pytest_asyncio.fixture
