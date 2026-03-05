@@ -401,7 +401,41 @@ SIMPA can be configured via environment variables and command-line arguments.
 
 > **How configuration works:** SIMPA uses [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) to automatically load environment variables from `.env` files. When you set an environment variable, it automatically becomes available via `settings.VARIABLE_NAME` in the code—no explicit `os.getenv()` calls needed. Environment variables are **case-insensitive** (`EMBEDDING_MODEL` and `embedding_model` work the same).
 
-#### **Database** (Required)
+### ⚡ Critical Parameters (Required)
+
+These parameters **must** be configured to bring up the MCP service:
+
+| Variable | Description | Why Required |
+|----------|-------------|--------------|
+| `DATABASE_URL` | PostgreSQL connection URL | Stores prompt knowledge base |
+| `OPENAI_API_KEY` | OpenAI API key | Required **only if** using OpenAI models. Other providers need their respective keys. |
+
+> **All other parameters can be left undefined** — they default to known, usable values suitable for most deployments.
+
+### Minimal Configuration Example
+
+The simplest working `.env` file (using local Ollama models):
+
+```bash
+# Only REQUIRED parameter - everything else defaults automatically
+DATABASE_URL=postgresql://user@localhost:5432/simpa
+```
+
+For OpenAI instead of Ollama, just add the API key:
+
+```bash
+# Required
+DATABASE_URL=postgresql://user@localhost:5432/simpa
+OPENAI_API_KEY=sk-your-key-here
+# LLM_MODEL defaults to ollama/llama3.2, but you can override:
+# LLM_MODEL=openai/gpt-4
+```
+
+### Optional Parameters (With Working Defaults)
+
+All sections below have sensible defaults. You only need to change them if you have specific requirements:
+
+#### **Database Connection Details**
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -430,9 +464,9 @@ SIMPA can be configured via environment variables and command-line arguments.
 - `gemini/gemini-pro`, `gemini/gemini-ultra` - Google
 - `azure/<deployment-name>` - Azure OpenAI
 
-#### **API Keys** (for cloud providers)
+#### **API Keys (Only if using cloud LLM providers)**
 
-These are loaded automatically by LiteLLM based on model prefix:
+Only needed if you use cloud-based LLMs instead of local Ollama models. These are loaded automatically by LiteLLM based on model prefix:
 
 | Variable | Description |
 |----------|-------------|
