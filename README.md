@@ -47,6 +47,35 @@ flowchart TB
     style Storage fill:#e8f5e9
 ```
 
+## 🔄 Prompt Lifecycle
+
+SIMPA sits between the **Agent Orchestrator** and **Implementation Agents**, continuously learning from each interaction:
+
+```mermaid
+flowchart LR
+    AO[Agent Orchestrator] -->|prompt| SR[SIMPA Prompt<br/>Refinement]
+    SR -->|refined-prompt| IA[Implementation<br/>Agent]
+    IA -->|Actions, Results<br/>& Products| RA[Reviewing Agent]
+    RA -->|refined-prompt-score| SR2[SIMPA]
+    SR2 -->|learn & improve| SR
+    
+    style AO fill:#e1f5fe,color:#000000
+    style SR fill:#fff3e0,color:#000000
+    style IA fill:#fce4ec,color:#000000
+    style RA fill:#f3e5f5,color:#000000
+    style SR2 fill:#fff3e0,color:#000000
+```
+
+**The Flow:**
+
+1. **Agent Orchestrator** → Sends raw `prompt` to SIMPA
+2. **SIMPA** → Returns `refined-prompt` (structured with ROLE, GOAL, REQUIREMENTS)
+3. **Implementation Agent** → Executes actions using refined prompt, produces results/products
+4. **Reviewing Agent** → Evaluates outcomes, generates `refined-prompt-score`
+5. **SIMPA** → Receives score, learns what works, improves future refinements
+
+This closed feedback loop ensures prompts get better with every execution.
+
 ## ✨ Features
 
 | Feature | Description |
@@ -83,6 +112,18 @@ Before installing SIMPA, ensure you have the following:
 | **llama3.2** | LLM for prompt refinement (pull via `ollama pull llama3.2`) |
 
 ### For Cloud Providers (Optional)
+
+> **🔐 Security Best Practice:** Provider API keys (OpenAI, Anthropic, Google, Azure) should be kept in your user home directory at `~/.env` rather than in the project `.env` file. This prevents accidental commits of sensitive credentials to version control.
+>
+> Create `~/.env` with your provider keys:
+> ```bash
+> # ~/.env - User-level secrets (not committed)
+> OPENAI_API_KEY=sk-...
+> ANTHROPIC_API_KEY=sk-ant-...
+> GOOGLE_API_KEY=...
+> AZURE_OPENAI_KEY=...
+> ```
+> SIMPA will automatically load keys from `~/.env` if available.
 
 - **OpenAI API Key** - Get from [platform.openai.com](https://platform.openai.com)
 - **Anthropic API Key** - Get from [console.anthropic.com](https://console.anthropic.com)
@@ -469,6 +510,139 @@ Provide feedback to improve future prompts.
 }
 ```
 
+## 📝 Prompt Refinement Examples
+
+SIMPA transforms vague user requests into structured, actionable specifications.
+
+### Example 1: Developer Agent
+
+**Original Prompt:**
+```
+Build a REST API for managing tasks.
+```
+
+**Refined Prompt:**
+```
+ROLE: Senior Backend Developer
+GOAL: Build a REST API for managing tasks.
+CONSTRAINTS: Your output will be only a descriptive overview of what the API will do.
+REQUIREMENTS:
+- Define all REST endpoints (GET, POST, PUT, DELETE) with their URLs and purposes
+- Explicitly specify request/response JSON formats for each endpoint
+- Include pagination, filtering, and sorting capabilities for task listing
+- Describe authentication mechanism (JWT or API key based)
+- Define error response formats and standard HTTP status codes
+- Outline rate limiting strategy if applicable
+OUTPUT: Structured API specification document.
+SUCCESS: All endpoints are well-defined, formats are validated, and specification is ready to implement.
+AUTONOMY: You may choose implementation technology and framework.
+FALLBACK: If a task requirement is unclear, ask for clarification or document your assumptions.
+```
+
+---
+
+### Example 2: Architect Agent
+
+**Original Prompt:**
+```
+Design a caching strategy for the product catalog.
+```
+
+**Refined Prompt:**
+```
+ROLE: Software Architect
+GOAL: Design a caching strategy for the product catalog.
+CONSTRAINTS: Output will be descriptive only; no actual implementation code.
+REQUIREMENTS:
+- Identify data access patterns (read-heavy, write-heavy, or mixed)
+- Design cache-invalidation strategy (time-based, event-driven, or hybrid)
+- Define cache key structure and naming conventions
+- Specify cache-aside, write-through, or write-behind patterns
+- Address cache consistency, eviction policies, and TTL configuration
+- Consider multi-tier caching (in-memory + distributed)
+- Document potential issues: stale data, thundering herd, cache penetration
+OUTPUT: Architecture document detailing caching strategy.
+SUCCESS: Design addresses scalability, performance, and data consistency.
+AUTONOMY: Choose appropriate caching technology (Redis, Memcached, Caffeine).
+FALLBACK: If data volume or access patterns are unclear, document assumptions.
+```
+
+---
+
+### Example 3: Tester Agent
+
+**Original Prompt:**
+```
+Write tests for the login module.
+```
+
+**Refined Prompt:**
+```
+ROLE: QA Engineer
+GOAL: Write tests for the login module.
+CONSTRAINTS: Provide complete test scenarios and detailed expected outcomes, no code.
+TEST CATEGORIES:
+- Unit Tests: Each function/method tested in isolation with mocks
+- Integration Tests: Service interactions (DB, external auth providers)
+- Edge Cases: Empty input, SQL injection attempts, XSS payloads
+- Boundary Tests: Max username length, password complexity rules
+- Error Paths: Invalid credentials, account locked, service unavailable
+- Load Tests: Concurrent login attempts
+REQUIREMENTS:
+- Use GIVEN/WHEN/THEN format for each scenario
+- Define specific test data (usernames, passwords)
+- Specify expected status codes and error messages
+- Identify test dependencies and setup requirements
+OUTPUT: Comprehensive test specification document.
+SUCCESS: All happy paths and edge cases are covered.
+AUTONOMY: Choose testing frameworks and assertion styles.
+FALLBACK: If authentication flow is unclear, document assumptions.
+```
+
+---
+
+### Example 4: Reviewer Agent (with scope constraints)
+
+**Original Prompt:**
+```
+Review error handling in the codebase.
+```
+
+**Scope Context:**
+```json
+{
+  "target_dirs": ["src/services/", "src/utils/"],
+  "target_files": ["src/services/user_service.py"],
+  "scope": "error handling patterns only",
+  "focus": ["security", "logging", "user-experience"]
+}
+```
+
+**Refined Prompt:**
+```
+ROLE: Security-Focused Code Reviewer
+GOAL: Review error handling patterns in the codebase.
+CONSTRAINTS: Review only within assigned scope and files:
+  - target_dirs: src/services/, src/utils/
+  - target_files: src/services/user_service.py
+  - focus: security, logging, user-experience
+  - scope: error handling patterns only
+CONTEXT: Production code review process
+OUTPUT: Line-by-line comments and summary report
+SUCCESS: Critical issues identified, recommendations actionable
+AUTONOMY: Can use static analysis tools within scope
+FALLBACK: Ask if scope unclear
+
+Review Checklist:
+- Security: Exception leaks sensitive data, proper sanitization
+- Logging: Appropriate log levels, no PII exposure
+- User Experience: Helpful error messages, graceful degradation
+- Code Quality: Consistent patterns, avoid catch-all exceptions
+- Documentation: Error scenarios documented, recovery paths clear
+```
+
+> **Note:** When scope context is provided (target_dirs, target_files, scope, focus), SIMPA injects these constraints into the refined prompt above the CONSTRAINTS section, limiting the agent's work to the specified boundaries.
+
 ## 🧠 Self-Improvement Algorithm
 
 SIMPA uses a sigmoid function to intelligently balance exploration (refinement) vs exploitation (reuse):
@@ -598,9 +772,12 @@ docker run -d \
 
 ## 📚 Documentation
 
-- [Test Suite Development](docs/implementation/test_suite_development.md) - Comprehensive testing guide
-- [API Reference](docs/) - MCP tool documentation
-- [Architecture Decisions](docs/) - ADRs and design patterns
+| Document | Description |
+|----------|-------------|
+| [SIMPA Process Architecture](docs/implementation/SIMPA-Process-Architecture.md) | System architecture, data flow, and component design |
+| [Test Suite Development](docs/implementation/test_suite_development.md) | Comprehensive testing guide and test development |
+| [API Reference](docs/) - MCP tool documentation
+| [Architecture Decisions](docs/) - ADRs and design patterns
 
 ## 📈 What's Next?
 
