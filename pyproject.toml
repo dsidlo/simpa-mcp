@@ -65,6 +65,7 @@ markers = [
 [dependency-groups]
 dev = [
     "flake8>=7.3.0",
+    "git-filter-repo>=2.47.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.21.0",
     "pytest-cover>=3.0.0",
