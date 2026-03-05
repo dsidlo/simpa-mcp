@@ -36,7 +36,10 @@
 update public.refined_prompts
 set is_active = false
 where original_prompt like 'Create a python script%';
-commit;]]></console>
+commit;
+
+delete from public.refined_prompts;
+delete from public.prompt_history;]]></console>
     </connection>
   </component>
   <component name="DBNavigator.Project.DatabaseEditorStateManager">

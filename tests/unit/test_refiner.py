@@ -76,9 +76,10 @@ class TestPromptRefinerBuildContext:
             similar_prompts=[mock_prompt],
         )
 
-        assert "Similar Successful Prompts (" in context
-        assert "Example 1 (Score: 4.50, Usage: 10):" in context
-        assert "Refined: Write a Python function with type hints" in context
+        # Similar prompts mentioned but NOT shown as examples (to avoid contamination)
+        assert "Note: 1 similar prompts exist in history." in context
+        assert "CRITICAL CONSTRAINTS" in context  # Reinforcement in user prompt
+        assert "Example 1" not in context  # No longer include examples
 
     async def test_build_context_limits_to_three_examples(self):
         """Test that only top 3 examples are included."""
@@ -103,12 +104,10 @@ class TestPromptRefinerBuildContext:
             similar_prompts=prompts,
         )
 
-        # Should only have Example 1, 2, 3
-        assert "Example 1" in context
-        assert "Example 2" in context
-        assert "Example 3" in context
-        assert "Example 4" not in context
-        assert "Example 5" not in context
+        # No examples shown (to avoid contamination), just note that they exist
+        assert "Note: 5 similar prompts exist in history." in context
+        assert "CRITICAL CONSTRAINTS" in context
+        assert "Example" not in context  # No examples at all
 
 
 @pytest.mark.asyncio
