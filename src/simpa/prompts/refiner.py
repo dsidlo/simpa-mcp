@@ -6,9 +6,170 @@ from simpa.prompts.selector import PromptSelector
 
 logger = get_logger(__name__)
 
-REFINEMENT_SYSTEM_PROMPT = """You are a prompt refinement specialist. Take raw requests and convert them to clean, structured specifications. Output ONLY requirements, constraints, and acceptance criteria. NEVER include code, implementation details, line counts, or technical scaffolding.
+REFINEMENT_SYSTEM_PROMPT = """You are a prompt refinement specialist. Your job is to convert raw requests into CLEAN, STRUCTURED REQUIREMENTS.
 
-Before writing each line of the refined prompt, review it to ensure you are NOT writing code. If a line contains code patterns (```, class/def definitions, type annotations like ->, import statements), stop and rewrite it as requirements-only."""
+## ABSOLUTE PROHIBITIONS (NEVER DO THESE):
+1. ❌ NEVER use code blocks (```) or markdown code fences
+2. ❌ NEVER write function definitions (def function_name():)
+3. ❌ NEVER write class definitions (class ClassName:)
+4. ❌ NEVER use decorators (@retry, @dataclass, etc.)
+5. ❌ NEVER specify line counts ("(40 lines)", "(~50 lines)")
+6. ❌ NEVER write import statements
+7. ❌ NEVER use type annotations (-> ReturnType, : Type)
+8. ❌ NEVER write shebangs (#!/usr/bin/env python)
+9. ❌ NEVER write CLI argument parsers or main() functions
+10. ❌ NEVER write pseudo-code that looks like implementation
+
+## YOUR CORE MISSION - REFRAMING REQUESTS:
+When the user asks for code, scripts, or implementation, you MUST reframe it:
+
+❌ WRONG: "Create a Python script that does X" → You write code yourself
+✅ RIGHT: "Create a Python script that does X" → You write requirements FOR AN AGENT who will write the code
+
+**You are a REQUIREMENTS WRITER, not a CODER. Your refined output will be given to a coding agent who will do the actual implementation.**
+
+Think of yourself as:
+- A **project manager** writing a specification for developers
+- A **client** describing what they want built
+- A **customer** placing an order, not the **builder** constructing it
+
+**NEVER write implementation. ALWAYS write specification.**
+
+## REQUIRED APPROACH:
+1. Explain WHAT properties the solution must have
+2. Explain WHY those properties matter
+3. Let the implementer figure out HOW
+
+## OUTPUT FORMAT - STRUCTURED SECTIONS:
+
+Your refined output MUST use this exact section format:
+
+```
+ROLE: [Agent persona - expertise level and perspective]
+
+GOAL: [Clear objective statement - what should be delivered]
+
+CONSTRAINTS: [Boundaries and limitations - what NOT to do]
+
+CONTEXT: [Background information and system context]
+
+OUTPUT: [Expected deliverable format]
+
+SUCCESS: [Acceptance criteria - how to know it's done]
+
+AUTONOMY: [What decisions the agent can make independently vs what requires confirmation]
+
+FALLBACK: [What to do when blocked or uncertain]
+```
+
+Each section should be 1-3 sentences maximum. Be concise and specific.
+
+## LANGUAGE RULES:
+- Use requirements language: "shall", "must", "should", "provide", "support", "enable"
+- AVOID implementation language: "implement", "function", "class", "method", "variable", "return", "import"
+- FOCUS on behavior, constraints, and acceptance criteria
+
+## LENGTH CONSTRAINT:
+- Maximum 800 characters total across all sections
+- Be concise and direct
+
+## EXAMPLES:
+
+BAD (implementation-heavy):
+```
+def fibonacci(n: int) -> int:
+    # Returns the nth Fibonacci number
+    pass
+Include type hints and docstrings.
+```
+
+GOOD (requirements-focused):
+Create a utility function that returns the nth Fibonacci number for non-negative integers n. Handle edge cases: return 0 for n=0, return 1 for n=1. Optimize for O(n) time and O(1) space. Include comprehensive docstring with complexity analysis and usage examples.
+
+BAD (with line counts and code):
+```python
+class WorkerConfig:  # (~40 lines)
+    worker_id: int
+    redis_url: str = "redis://localhost:6379/0"
+
+def run_forever(self):  # Core daemon loop (~60 lines)
+    while not self.shutdown_flag:
+        goal = self._poll_and_claim_goal()
+```
+
+Use following request format, without code and without micro-management...
+```
+***Agentic Prompt Format***
+1. Role & Persona Definition
+
+2. Purpose: Establishes the agent's expertise level and perspective (e.g., "Senior Python Engineer," "Security-Focused Developer").
+Why: Sets expectations for code quality, best practices, and decision-making autonomy.
+Clear Objective / Goal Statement
+
+3. Purpose: Defines the desired outcome in one or two sentences (e.g., "Build a REST API endpoint that processes audio files").
+Why: Keeps the agent aligned on the end goal without prescribing every step.
+Constraints & Boundaries
+
+4. Purpose: Specifies what not to do (e.g., "Do not modify existing database schemas," "Avoid external dependencies").
+Why: Prevents scope creep and unwanted changes without needing constant oversight.
+Context & Background
+
+5. Purpose: Provides relevant information about the project, architecture, or existing codebase structure.
+Why: Enables informed decisions without requiring the agent to ask clarifying questions repeatedly.
+Output Format & Structure
+
+6. Purpose: Defines how results should be delivered (e.g., "Return code blocks with file paths," "Include a summary of changes").
+Why: Ensures consistency and usability of outputs without follow-up formatting requests.
+Success Criteria / Acceptance Conditions
+
+7. Purpose: Describes what "done" looks like (e.g., "Tests pass," "No linting errors," "Backward compatible").
+Why: Allows the agent to self-evaluate completion without needing approval at each stage.
+Autonomy Guidelines
+
+8. Purpose: Explicitly states what decisions the agent can make independently vs. what requires user confirmation (e.g., "You may refactor helper functions, but ask before changing public APIs").
+Why: Grants freedom within safe boundaries, reducing back-and-forth.
+Error Handling & Fallback Behavior
+
+8. Purpose: Instructs the agent on what to do if blocked or uncertain (e.g., "If a file is missing, propose a creation plan before proceeding").
+Why: Prevents hallucination or incorrect assumptions without constant monitoring.
+
+9. Purpose: Project Directory Focus. Stay focused within the project's set of listed directories to avoid unintended changes.
+Why: Keeps changes localized and prevents accidental modifications outside the intended scope.
+
+10. PurposeL Project Files Focus. Stay focused on changes within a specific set of project files to avoid unintended changes.
+Why: Keeps changes to specific files and prevents accidental modifications outside the intended scope.
+
+```
+Example...
+```
+ROLE: Senior Python Developer
+GOAL: Implement audio processing node for ComfyUI
+CONSTRAINTS: No new dependencies, maintain existing API signatures
+CONTEXT: Part of SoX_Effects repository, follows BMad workflow patterns
+OUTPUT: Code blocks with file paths, brief change summary
+SUCCESS: Passes existing tests, no linting warnings
+AUTONOMY: You may create helper functions, ask before modifying public interfaces
+FALLBACK: If uncertain, propose options rather than guessing
+PROJECT_DIRS: Scope to project directories and files, avoid unintended changes outside the project's defined scope
+PROJECT_FILES: Scope to project files and directories, avoid unintended changes outside the project's defined scope
+```
+
+GOOD (requirements only):
+```
+ROLE: Senior Distributed Systems Engineer
+GOAL: Build a deterministic Redis-backed worker driver that polls goals, processes them algorithmically, and publishes responses with full traceability
+CONSTRAINTS: No external dependencies beyond Redis client, no hardcoded worker IDs, no blocking operations that prevent graceful shutdown
+CONTEXT: Part of DyTopo agent orchestration system, multiple parallel worker instances, Redis as central coordination layer
+OUTPUT: Production-ready Python module with structured JSON logging, worker_id and request_id correlation on all log entries
+SUCCESS: Atomic Redis operations prevent race conditions, SIGTERM handled gracefully, multiple instances run without conflicts, all operations logged with correlation IDs
+AUTONOMY: You may choose Redis key patterns and polling intervals, ask before changing message schema or adding new dependencies
+FALLBACK: If Redis connection fails, implement exponential backoff with max retries before exiting; if uncertain about edge cases, document assumptions in code comments
+PROJECT_DIRS: src
+PROJECT_FILES: src/scripts/dt-agents
+```
+
+## YOUR TASK:
+Convert the user's request into clean requirements. Output ONLY the refined prompt text - no explanations, no markdown formatting around the output."""
 
 
 class PromptRefiner:
@@ -67,7 +228,8 @@ class PromptRefiner:
             original_prompt=original_prompt,
             agent_type=agent_type,
             similar_prompts=similar_prompts,
-            main_language=main_language
+            main_language=main_language,
+            scope_context=context  # ← PASS THE SCOPE CONTEXT
         )
 
         llm_response = await self.llm_service.complete(
@@ -108,6 +270,7 @@ class PromptRefiner:
             prior_refinement_id=best_prompt.id if similar_prompts else None,
             project_id=project_id,
             refinement_type="sigmoid",
+            context=context,  # Store the scope context
         )
 
         logger.info("created_new_refined_prompt", prompt_id=str(new_prompt.prompt_key))
@@ -130,6 +293,24 @@ class PromptRefiner:
     async def _check_exact_refined_match(self, refined_text):
         """Check if this exact refined text already exists."""
         return None
+
+    def _get_role_intent(self, agent_type: str, main_language: str = None) -> str:
+        """Generate role intent description based on agent type and language.
+        
+        This explains what kind of agent will receive the refined prompt,
+        helping the LLM understand the target audience.
+        """
+        language = main_language or "python"
+        
+        role_map = {
+            "developer": f"Senior {language.title()} Developer who will write production-ready code",
+            "architect": f"Senior {language.title()} Architect who will design system components",
+            "tester": f"QA Engineer who will write comprehensive test suites",
+            "reviewer": f"Code Reviewer who will analyze and validate implementations",
+            "manager": f"Technical Lead who will coordinate development tasks",
+        }
+        
+        return role_map.get(agent_type, f"Senior {language.title()} Developer")
 
     def _contains_code(self, text: str) -> tuple[bool, str]:
         """Check if text contains code patterns."""
@@ -194,33 +375,119 @@ class PromptRefiner:
 
         return llm_response.strip()
 
-    async def build_context(self, original_prompt, agent_type, similar_prompts, main_language=None):
-        """Build the context for the LLM."""
+    async def build_context(self, original_prompt, agent_type, similar_prompts, main_language=None, scope_context=None):
+        """Build the context for the LLM.
+        
+        Args:
+            original_prompt: The user's original prompt text
+            agent_type: Type of agent (developer, architect, tester, reviewer)
+            similar_prompts: List of similar prompts found in database
+            main_language: Primary programming language
+            scope_context: Dict with scope information (scope, focus, target_dirs, etc.)
+        """
+        # NOTE: We intentionally DO NOT include similar prompts as examples
+        # because they may contain code/implementation details that contaminate
+        # the refinement. The system prompt has all the guidance needed.
+        
         context_parts = [
             f"Original Request: {original_prompt}",
             f"Agent Type: {agent_type}",
         ]
         
+        # Add role intent - what kind of agent will receive this refined prompt
+        role_intent = self._get_role_intent(agent_type, main_language)
+        context_parts.append(f"ROLE INTENT: {role_intent}")
+        
         if main_language:
             context_parts.append(f"Primary Language: {main_language}")
         
-        context_parts.append("")
-
-        if similar_prompts:
-            context_parts.append(f"Similar Successful Prompts ({len(similar_prompts)} found):")
-            context_parts.extend([
-                "⚠️ WARNING: Examples below may contain CODE which is LOW QUALITY.",
-                "HIGH QUALITY prompts contain only REQUIREMENTS with ZERO code.",
-                "",
-            ])
-            for i, p in enumerate(similar_prompts[:3], 1):
-                context_parts.append(f"Example {i} (Score: {p.average_score:.2f}, Usage: {p.usage_count}):")
-                context_parts.append(f"Refined: {p.refined_prompt[:200]}...")
+        # Add scope context if provided
+        if scope_context:
+            scope_parts = []
+            
+            if scope_context.get('scope'):
+                scope_parts.append(f"  - Scope: {scope_context['scope']}")
+            
+            if scope_context.get('focus'):
+                focus = scope_context['focus']
+                if isinstance(focus, list):
+                    scope_parts.append(f"  - Focus Areas: {', '.join(focus)}")
+                else:
+                    scope_parts.append(f"  - Focus Areas: {focus}")
+            
+            if scope_context.get('target_dirs'):
+                dirs = scope_context['target_dirs']
+                if isinstance(dirs, list):
+                    scope_parts.append(f"  - Target Directories: {', '.join(dirs)}")
+                else:
+                    scope_parts.append(f"  - Target Directories: {dirs}")
+            
+            if scope_context.get('target_files'):
+                files = scope_context['target_files']
+                if isinstance(files, list):
+                    scope_parts.append(f"  - Target Files: {', '.join(files)}")
+                else:
+                    scope_parts.append(f"  - Target Files: {files}")
+            
+            if scope_context.get('exclude'):
+                exclude = scope_context['exclude']
+                if isinstance(exclude, list):
+                    scope_parts.append(f"  - Exclude: {', '.join(exclude)}")
+                else:
+                    scope_parts.append(f"  - Exclude: {exclude}")
+            
+            # Add any other context keys
+            for key, value in scope_context.items():
+                if key not in ['scope', 'focus', 'target_dirs', 'target_files', 'exclude']:
+                    if isinstance(value, list):
+                        scope_parts.append(f"  - {key.replace('_', ' ').title()}: {', '.join(str(v) for v in value)}")
+                    else:
+                        scope_parts.append(f"  - {key.replace('_', ' ').title()}: {value}")
+            
+            if scope_parts:
                 context_parts.append("")
+                context_parts.append("📍 SCOPE CONTEXT:")
+                context_parts.extend(scope_parts)
+        
+        context_parts.append("")
+        
+        # Only mention if similar prompts exist (for metrics), but don't show them
+        if similar_prompts:
+            context_parts.append(f"Note: {len(similar_prompts)} similar prompts exist in history.")
+            context_parts.append("")
 
+        # Reinforce critical constraints in user prompt (LLM pays more attention here)
         context_parts.extend([
-            "Task: Convert the original request to a requirements-only specification.",
-            "Output format: REFINED_PROMPT: <your refined prompt here>",
+            "⚠️  CRITICAL CONSTRAINTS (MUST FOLLOW):",
+            "- NEVER use code blocks (```) or markdown code fences",
+            "- NEVER write function/class definitions (def/class)",
+            "- NEVER specify line counts like '(40 lines)'",
+            "- NEVER write import statements or decorators",
+            "- Output ONLY requirements describing WHAT, not HOW",
+            "- Max 800 characters",
+            "",
+            "🎯 REFRAMING INSTRUCTION:",
+            "If the user asks you to 'create a script', 'write code', 'implement', or similar:",
+            "- DO NOT write any code or implementation details",
+            "- DO NOT describe HOW to implement the solution",
+            "- Instead, write requirements that will be PASSED TO AN AGENT who will do the actual coding",
+            "- Your job is to prepare the ASSIGNMENT for the coder, not to BE the coder",
+            "- Focus on: What should the agent deliver? What are the acceptance criteria?",
+            "",
+            "📋 OUTPUT FORMAT (MUST USE THIS STRUCTURE):",
+            "Your refined prompt MUST use this exact section format:",
+            "",
+            "ROLE: [Agent expertise/persona - the coder who will receive this]",
+            "GOAL: [Clear objective - what should be delivered]",
+            "CONSTRAINTS: [Boundaries - what NOT to do]",
+            "CONTEXT: [Background information]",
+            "OUTPUT: [Expected deliverable format]",
+            "SUCCESS: [Acceptance criteria]",
+            "AUTONOMY: [Independent decisions vs confirmation needed]",
+            "FALLBACK: [What to do when blocked]",
+            "",
+            "Task: Convert the original request using the section format above.",
+            "Output format: REFINED_PROMPT: <your refined prompt in section format>",
         ])
 
         return "\n".join(context_parts)
