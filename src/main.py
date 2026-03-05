@@ -81,11 +81,11 @@ def main():
     parser.add_argument(
         "--log-level",
         type=str,
-        choices=["debug", "info", "warn", "error", "fatal"],
+        choices=["trace", "debug", "info", "warn", "error", "fatal"],
         default="info",
         metavar="LEVEL",
         dest="log_level",
-        help="Log level (debug, info, warn, error, fatal) - default: info",
+        help="Log level (trace, debug, info, warn, error, fatal) - default: info",
     )
     parser.add_argument(
         "--log-file",
@@ -120,7 +120,7 @@ def main():
     if args.transport:
         from simpa.config import settings
         settings.mcp_transport = args.transport
-        logger.debug("transport_overridden", transport=args.transport)
+        logger.trace("transport_overridden", transport=args.transport)
 
     # Handle database initialization mode
     if args.init_db:
