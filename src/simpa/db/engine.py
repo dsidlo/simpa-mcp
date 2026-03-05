@@ -17,6 +17,14 @@ from simpa.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Helper for safe trace logging (handles lazy proxy before config)
+def _trace(event: str, **kwargs) -> None:
+    """Log at trace level if available, otherwise debug."""
+    if hasattr(logger, 'trace'):
+        logger.trace(event, **kwargs)
+    else:
+        logger.debug(event, **kwargs)
+
 # Convert PostgreSQL DSN to async format
 _async_database_url = str(settings.database_url).replace(
     "postgresql://",
@@ -48,7 +56,8 @@ def _create_engine(database_url: str | None = None, pool_size: int | None = None
         if len(creds) >= 3:
             safe_url = f"{creds[0]}:***@{parts[1]}"
     
-    logger.debug("creating_database_engine", url=safe_url, pool_size=pool_size)
+    # Use trace only if available (logger might be lazy proxy before config)
+    _trace("creating_database_engine", url=safe_url, pool_size=pool_size)
     
     # Use NullPool when pool_size is None (for tests) to avoid connection reuse issues
     if pool_size is None:
@@ -109,14 +118,14 @@ async def init_db() -> None:
     try:
         async with async_engine.begin() as conn:
             # Enable pgvector extension
-            logger.debug("creating_pgvector_extension")
+            _trace("creating_pgvector_extension")
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            logger.debug("pgvector_extension_ready")
+            _trace("pgvector_extension_ready")
             
             # Create all tables
-            logger.debug("creating_database_tables")
+            _trace("creating_database_tables")
             await conn.run_sync(Base.metadata.create_all)
-            logger.debug("database_tables_created")
+            _trace("database_tables_created")
         
         logger.info("database_initialization_complete")
         
@@ -168,20 +177,20 @@ def reset_engine(database_url: str | None = None, pool_size: int | None = None) 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Get a database session as an async context manager."""
     session_id = id(async_engine)
-    logger.debug("database_session_acquired", session_id=session_id)
+    _trace("database_session_acquired", session_id=session_id)
     
     async with AsyncSessionLocal() as session:
         try:
             yield session
             await session.commit()
-            logger.debug("database_session_committed", session_id=session_id)
+            _trace("database_session_committed", session_id=session_id)
         except Exception as e:
             await session.rollback()
             logger.error("database_session_rollback", session_id=session_id, error=str(e))
             raise
         finally:
             await session.close()
-            logger.debug("database_session_closed", session_id=session_id)
+            _trace("database_session_closed", session_id=session_id)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

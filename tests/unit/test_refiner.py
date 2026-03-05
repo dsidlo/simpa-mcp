@@ -8,6 +8,30 @@ from simpa.prompts.refiner import PromptRefiner, REFINEMENT_SYSTEM_PROMPT
 from simpa.db.models import RefinedPrompt
 
 
+@pytest.fixture(autouse=True)
+def patch_logger_trace():
+    """Mock the trace method on the structlog logger."""
+    with patch("simpa.prompts.refiner.logger") as mock_logger:
+        mock_logger.trace = MagicMock()
+        mock_logger.debug = MagicMock()
+        mock_logger.info = MagicMock()
+        mock_logger.warning = MagicMock()
+        mock_logger.error = MagicMock()
+        yield mock_logger
+
+
+@pytest.fixture(autouse=True)
+def patch_bm25_logger():
+    """Mock BM25 repository logger."""
+    with patch("simpa.db.bm25_repository.logger") as mock_logger:
+        mock_logger.trace = MagicMock()
+        mock_logger.debug = MagicMock()
+        mock_logger.info = MagicMock()
+        mock_logger.warning = MagicMock()
+        mock_logger.error = MagicMock()
+        yield mock_logger
+
+
 @pytest.mark.asyncio
 class TestPromptRefinerBuildContext:
     """Test the build_context method."""

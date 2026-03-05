@@ -201,6 +201,50 @@ class Settings(BaseSettings):
         description="Minimum similarity score for vector matches",
     )
 
+    # BM25 Hybrid Search
+    bm25_search_enabled: bool = Field(
+        default=True,
+        description="Enable BM25 keyword search for hybrid retrieval",
+    )
+    bm25_k1: float = Field(
+        default=1.2,
+        ge=0.1,
+        le=3.0,
+        description="BM25 k1 parameter (term saturation)",
+    )
+    bm25_b: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description="BM25 b parameter (document length normalization)",
+    )
+    bm25_limit: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Number of BM25 results to retrieve",
+    )
+    bm25_vector_limit: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Number of vector results in hybrid search",
+    )
+    hybrid_search_enabled: bool = Field(
+        default=True,
+        description="Enable hybrid search combining vector and BM25",
+    )
+    llm_rerank_enabled: bool = Field(
+        default=True,
+        description="Enable LLM re-ranking of hybrid search results",
+    )
+    llm_rerank_candidates: int = Field(
+        default=10,
+        ge=2,
+        le=20,
+        description="Number of candidates for LLM re-ranking",
+    )
+
     # MCP Server
     mcp_transport: Literal["stdio", "sse"] = Field(
         default="stdio",
@@ -214,9 +258,9 @@ class Settings(BaseSettings):
     )
 
     # Logging
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+    log_level: Literal["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
         default="INFO",
-        description="Logging level",
+        description="Logging level (TRACE for detailed debugging)",
     )
     json_logging: bool = Field(
         default=True,
@@ -262,3 +306,23 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+
+# Initialize logging immediately when config is imported
+# This ensures trace/debug logging is available before other modules load
+def _init_logging():
+    """Initialize logging based on settings."""
+    try:
+        from simpa.utils.logging import setup_logging
+        setup_logging(
+            level=settings.log_level,
+            log_file="/tmp/simpa-mcp.log",
+            console_output=False,
+        )
+    except Exception:
+        # If logging setup fails, continue anyway - better than crashing on import
+        import logging as stdlib_logging
+        stdlib_logging.basicConfig(level=stdlib_logging.INFO)
+
+
+_init_logging()

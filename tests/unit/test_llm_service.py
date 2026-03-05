@@ -20,6 +20,18 @@ def clear_llm_cache():
         os.remove(cache_path)
 
 
+@pytest.fixture(autouse=True)
+def patch_logger():
+    """Mock logger to support trace level."""
+    with patch("simpa.llm.service.logger") as mock_logger:
+        mock_logger.trace = MagicMock()
+        mock_logger.debug = MagicMock()
+        mock_logger.info = MagicMock()
+        mock_logger.warning = MagicMock()
+        mock_logger.error = MagicMock()
+        yield mock_logger
+
+
 def mock_llm_settings(mock_settings, model="ollama/llama3.2"):
     """Helper to configure LLM settings for LiteLLM."""
     mock_settings.llm_model = model

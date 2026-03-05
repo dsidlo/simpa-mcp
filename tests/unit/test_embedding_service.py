@@ -6,6 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from simpa.embedding.service import EmbeddingService
 
 
+@pytest.fixture(autouse=True)
+def patch_logger():
+    """Mock logger to support trace level."""
+    with patch("simpa.embedding.service.logger") as mock_logger:
+        mock_logger.trace = MagicMock()
+        mock_logger.debug = MagicMock()
+        mock_logger.info = MagicMock()
+        mock_logger.warning = MagicMock()
+        mock_logger.error = MagicMock()
+        yield mock_logger
+
+
 def mock_cache_settings(mock_settings):
     """Helper to add cache settings to mock."""
     mock_settings.embedding_cache_enabled = False  # Disable cache for most tests
