@@ -306,12 +306,6 @@ class TestUpdatePromptResultsTool:
         assert updated is not None
         assert updated.usage_count == 4
         assert updated.average_score == pytest.approx(3.5, abs=0.01)
-        
-        # Verify histogram
-        assert updated.score_dist_2 == 1
-        assert updated.score_dist_3 == 1
-        assert updated.score_dist_4 == 1
-        assert updated.score_dist_5 == 1
 
 
 @pytest.mark.integration

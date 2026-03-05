@@ -163,13 +163,6 @@ class RefinedPrompt(Base):
         nullable=False,
     )
 
-    # Score distribution histogram (1-5 bins)
-    score_dist_1: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    score_dist_2: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    score_dist_3: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    score_dist_4: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    score_dist_5: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-
     # Scope context (JSON blob for scope, focus, target_dirs, etc.)
     context: Mapped[dict | None] = mapped_column(
         JSON,
@@ -210,31 +203,8 @@ class RefinedPrompt(Base):
         # Update weighted score (Bayesian-like approach)
         self.score_weighted = self.average_score
 
-        # Update score distribution histogram
-        score_bin = max(1, min(5, int(new_score)))
-        if score_bin == 1:
-            self.score_dist_1 += 1
-        elif score_bin == 2:
-            self.score_dist_2 += 1
-        elif score_bin == 3:
-            self.score_dist_3 += 1
-        elif score_bin == 4:
-            self.score_dist_4 += 1
-        elif score_bin == 5:
-            self.score_dist_5 += 1
-
         # Update last used timestamp
         self.last_used_at = datetime.now()
-
-    def get_score_distribution(self) -> dict[str, int]:
-        """Get score distribution as a dictionary."""
-        return {
-            "1": self.score_dist_1,
-            "2": self.score_dist_2,
-            "3": self.score_dist_3,
-            "4": self.score_dist_4,
-            "5": self.score_dist_5,
-        }
 
     def __repr__(self) -> str:
         return (

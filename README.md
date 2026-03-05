@@ -291,9 +291,8 @@ Add SIMPA to your MCP client's configuration file:
         "DATABASE_URL": "postgresql://simpa:simpa@localhost:5432/simpa",
         "EMBEDDING_PROVIDER": "ollama",
         "EMBEDDING_MODEL": "nomic-embed-text",
-        "EMBEDDING_BASE_URL": "http://localhost:11434",
-        "LLM_PROVIDER": "ollama",
-        "LLM_MODEL": "llama3.2",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "LLM_MODEL": "ollama/llama3.2",
         "PYTHONPATH": "/absolute/path/to/simpa-mcp/src"
       }
     }
@@ -396,24 +395,180 @@ python -m src.main --help
 
 ## 🔧 Configuration
 
+SIMPA can be configured via environment variables and command-line arguments.
+
 ### Environment Variables
 
+> **How configuration works:** SIMPA uses [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) to automatically load environment variables from `.env` files. When you set an environment variable, it automatically becomes available via `settings.VARIABLE_NAME` in the code—no explicit `os.getenv()` calls needed. Environment variables are **case-insensitive** (`EMBEDDING_MODEL` and `embedding_model` work the same).
+
+#### **Database** (Required)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection URL | `postgresql://dsidlo@localhost:5432/simpa` |
+
+#### **Embedding Service**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EMBEDDING_PROVIDER` | Embedding provider (`ollama` or `openai`) | `ollama` |
+| `EMBEDDING_MODEL` | Embedding model name | `nomic-embed-text` |
+| `EMBEDDING_DIMENSIONS` | Vector dimensions (768 for nomic-embed-text) | `768` |
+| `OLLAMA_BASE_URL` | Ollama API base URL | `http://localhost:11434` |
+
+#### **LLM Service**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LLM_MODEL` | LLM model (LiteLLM format: `provider/model`) | `ollama/llama3.2` |
+| `LLM_TEMPERATURE` | Sampling temperature (0.0 - 2.0) | `0.7` |
+
+**Supported Models (via LiteLLM):**
+- `ollama/llama3.2` - Local Ollama models
+- `gpt-4`, `gpt-3.5-turbo` - OpenAI
+- `claude-3-opus-20240229`, `claude-3-sonnet-20240229` - Anthropic
+- `gemini/gemini-pro`, `gemini/gemini-ultra` - Google
+- `azure/<deployment-name>` - Azure OpenAI
+
+#### **API Keys** (for cloud providers)
+
+These are loaded automatically by LiteLLM based on model prefix:
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `AZURE_API_KEY` | Azure OpenAI API key |
+| `AZURE_API_BASE` | Azure OpenAI endpoint base URL |
+| `COHERE_API_KEY` | Cohere API key |
+
+#### **Embedding Cache**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EMBEDDING_CACHE_ENABLED` | Enable LRU cache for embeddings | `true` |
+| `EMBEDDING_CACHE_MAX_SIZE` | Maximum cache entries (100-10000) | `1000` |
+| `EMBEDDING_CACHE_MAX_TEXT_LENGTH` | Maximum text length to cache | `10000` |
+
+#### **LLM Cache**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LLM_CACHE_ENABLED` | Enable LLM response caching | `true` |
+| `LLM_CACHE_TTL_SECONDS` | Cache TTL in seconds (60-86400) | `3600` |
+| `LLM_CACHE_MAX_ENTRIES` | Maximum cache entries (100-100000) | `10000` |
+| `LLM_CACHE_DB_PATH` | Path to cache SQLite database | `./llm_cache.db` |
+
+#### **Fast-Path Hash Match**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HASH_FAST_PATH_ENABLED` | Enable hash-based exact match lookup | `true` |
+| `HASH_FAST_PATH_MIN_SCORE` | Minimum score for hash reuse (1.0-5.0) | `4.0` |
+
+#### **Refinement Strategy**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SIMILARITY_BYPASS_THRESHOLD` | Cosine similarity threshold for bypass (0.9-1.0) | `0.95` |
+| `SIMILARITY_BYPASS_MIN_SCORE` | Minimum score for high-similarity bypass (1.0-5.0) | `4.5` |
+| `SIGMOID_K` | Sigmoid steepness parameter | `1.5` |
+| `SIGMOID_MU` | Sigmoid midpoint (50% threshold) | `3.0` |
+| `MIN_REFINEMENT_PROBABILITY` | Minimum refinement probability (0.0-1.0) | `0.05` |
+
+#### **Vector Search**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VECTOR_SEARCH_LIMIT` | Number of similar prompts to retrieve (1-50) | `5` |
+| `VECTOR_SIMILARITY_THRESHOLD` | Minimum similarity score (0.0-1.0) | `0.7` |
+
+#### **BM25 Hybrid Search**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BM25_SEARCH_ENABLED` | Enable BM25 keyword search | `true` |
+| `BM25_K1` | BM25 term saturation parameter (0.1-3.0) | `1.2` |
+| `BM25_B` | BM25 document length normalization (0.0-1.0) | `0.75` |
+| `BM25_LIMIT` | Number of BM25 results (1-20) | `5` |
+| `BM25_VECTOR_LIMIT` | Number of vector results in hybrid (1-20) | `5` |
+| `HYBRID_SEARCH_ENABLED` | Enable hybrid search combining vector + BM25 | `true` |
+| `LLM_RERANK_ENABLED` | Enable LLM re-ranking of results | `true` |
+| `LLM_RERANK_CANDIDATES` | Number of candidates for re-ranking (2-20) | `10` |
+
+#### **MCP Server**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_TRANSPORT` | Transport protocol (`stdio` or `sse`) | `stdio` |
+| `MCP_PORT` | Server port for SSE transport (1024-65535) | `8000` |
+
+#### **Logging**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOG_LEVEL` | Logging level (`TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) | `INFO` |
+| `JSON_LOGGING` | Enable structured JSON logging | `true` |
+
+#### **Security**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MAX_PROMPT_LENGTH` | Maximum prompt text length (100-100000) | `10000` |
+| `ENABLE_PII_DETECTION` | Enable basic PII detection | `true` |
+
+#### **Project Association**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `REQUIRE_PROJECT_ID` | Require project_id for all refinements | `false` |
+
+#### **Diff Saliency**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DIFF_SALIENCY_ENABLED` | Enable diff saliency filtering | `true` |
+| `DIFF_SALIENCY_THRESHOLD` | Minimum saliency score (0.0-1.0) | `0.6` |
+| `DIFF_MAX_STORED_PER_REQUEST` | Maximum diffs per request (1-50) | `10` |
+
+### Complete Example `.env` File
+
 ```bash
-# Required
+# Database (Required)
 DATABASE_URL=postgresql://simpa:simpa@localhost:5432/simpa
 
-# Embedding (OpenAI or Ollama)
+# Embedding Service
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=nomic-embed-text
-EMBEDDING_BASE_URL=http://localhost:11434
+EMBEDDING_DIMENSIONS=768
+OLLAMA_BASE_URL=http://localhost:11434
 
-# LLM (OpenAI, Anthropic, or Ollama)
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.2
+# LLM Service
+LLM_MODEL=ollama/llama3.2
 LLM_TEMPERATURE=0.7
+
+# API Keys (if using cloud providers)
+# OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
+# GEMINI_API_KEY=...
 
 # MCP Server
 MCP_TRANSPORT=stdio
+MCP_PORT=8000
+
+# Caching (optional, defaults are reasonable)
+EMBEDDING_CACHE_ENABLED=true
+LLM_CACHE_ENABLED=true
+
+# Refinement behavior (optional)
+SIMILARITY_BYPASS_THRESHOLD=0.95
+SIGMOID_K=1.5
+SIGMOID_MU=3.0
+
+# Logging
+LOG_LEVEL=INFO
+JSON_LOGGING=true
 ```
 
 ### Command Line Options
@@ -423,14 +578,58 @@ SIMPA supports several command line flags for runtime configuration:
 ```bash
 # Show all available options
 python -m src.main --help
-
-# Common options
---transport {stdio,sse}     # MCP transport protocol (default: stdio)
---log-level {debug,info,warn,error,fatal}  # Logging level (default: info)
---log-file PATH             # Path to log file (default: /tmp/simpa-mcp.log)
---log-console               # Also log to console (stderr)
---init-db                   # Initialize database and exit
 ```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--init-db` | Initialize the database schema and exit | - |
+| `--transport {stdio,sse}` | MCP transport protocol | `stdio` |
+| `--log-level {trace,debug,info,warn,error,fatal}` | Logging level | `info` |
+| `--log-file PATH` | Path to log file | `/tmp/simpa-mcp.log` |
+| `--log-console` | Also log to console (stderr) ⚠️ Not recommended for MCP stdio mode | - |
+| `--env PATH` | Path to `.env` file | `~/.env` |
+| `--project-id-required` | Require `project_id` for all refinement requests | - |
+
+**Examples:**
+
+```bash
+# Initialize database
+python -m src.main --init-db
+
+# Run with SSE transport on custom port (also set MCP_PORT in .env)
+python -m src.main --transport sse
+
+# Debug logging to custom file
+python -m src.main --log-level debug --log-file /var/log/simpa.log
+
+# Use custom env file
+python -m src.main --env ~/my-project/.env
+
+# Require project_id for all prompts
+python -m src.main --project-id-required
+
+# Combination of options
+python -m src.main --env ./.env.local --log-level debug --transport sse
+```
+
+#### Environment File (`--env`)
+
+By default, SIMPA loads environment variables from your home directory at `~/.env`. You can specify a custom `.env` file using the `--env` option:
+
+```bash
+# Use a custom env file
+python -m src.main --env ~/my-project/.env
+
+# Or use a project-specific .env
+python -m src.main --env ./.env.local
+```
+
+**Loading order:**
+1. If `--env` is specified and the file exists, it is loaded first
+2. If `--env` is not specified, `~/.env` is loaded if it exists
+3. The project `./.env` in the current directory is loaded last (overrides previous values)
+
+This allows you to keep sensitive credentials (API keys) in `~/.env` while keeping project-specific settings in the project `.env`.
 
 #### Project-Associated Prompt Development (`--project-id-required`)
 
@@ -674,26 +873,97 @@ p_refine(S) = 1 / (1 + exp(k * (S - mu)))
 |--------|------|---------|
 | `id` | UUID | Primary key |
 | `prompt_key` | UUID | Public identifier for MCP tools |
+| `created_at` | TIMESTAMP | When prompt was first refined |
+| `updated_at` | TIMESTAMP | Last modification time |
+| `last_used_at` | TIMESTAMP | Last time this prompt was executed |
 | `embedding` | vector(768) | Semantic embedding for similarity search |
-| `agent_type` | VARCHAR | Agent specialization |
-| `main_language` | VARCHAR | Primary programming language |
+| `agent_type` | VARCHAR(100) | Agent specialization (e.g., "developer") |
+| `refinement_type` | VARCHAR(20) | Strategy used (default: "sigmoid") |
+| `main_language` | VARCHAR(50) | Primary programming language |
+| `other_languages` | JSON | Additional languages used |
+| `domain` | VARCHAR(100) | Domain/topic classification |
+| `tags` | JSON | Array of descriptive tags |
+| `original_prompt_hash` | VARCHAR(64) | Hash for fast exact-match lookup |
 | `original_prompt` | TEXT | Raw input prompt |
 | `refined_prompt` | TEXT | Optimized/expanded version |
-| `average_score` | FLOAT | Running average of action scores |
+| `refinement_version` | INTEGER | Version number for iterative refinements |
+| `prior_refinement_id` | UUID | Self-reference for refinement chains |
+| `project_id` | UUID | FK to projects (optional context) |
 | `usage_count` | INTEGER | Total times used |
-| `score_dist_1-5` | INTEGER | Histogram of score distribution |
+| `average_score` | FLOAT | Running average of action scores (1.0-5.0) |
+| `score_weighted` | FLOAT | Bayesian-weighted score for ranking |
+| `context` | JSON | Scope context (focus, target_dirs, etc.) |
+| `is_active` | BOOLEAN | Soft delete flag |
+
+### `projects` - Project Context
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | UUID | Primary key |
+| `project_name` | VARCHAR(255) | Unique project name |
+| `description` | TEXT | Project description |
+| `main_language` | VARCHAR(50) | Primary language for this project |
+| `other_languages` | JSON | Other languages used |
+| `library_dependencies` | JSON | Frameworks/libraries (e.g., ["react", "django"]) |
+| `project_structure` | JSON | Directory structure hints (src_dirs, test_dirs, etc.) |
+| `created_at` | TIMESTAMP | Project creation time |
+| `updated_at` | TIMESTAMP | Last update time |
+| `is_active` | BOOLEAN | Soft delete flag |
 
 ### `prompt_history` - Learning Data
 
 | Column | Type | Purpose |
 |--------|------|---------|
 | `id` | UUID | Primary key |
+| `project_id` | UUID | FK to projects (optional context) |
 | `prompt_id` | UUID | FK to refined_prompts |
-| `action_score` | FLOAT | Score for this execution |
-| `test_passed` | BOOLEAN | Test results |
+| `created_at` | TIMESTAMP | When this record was created |
+| `request_id` | UUID | Optional trace/request ID |
+| `executed_by_agent` | VARCHAR(100) | Which agent executed this prompt |
+| `executed_at` | TIMESTAMP | Execution timestamp |
+| `action_score` | FLOAT | Quality score for this execution (1.0-5.0) |
+| `test_passed` | BOOLEAN | Whether tests passed |
 | `lint_score` | FLOAT | Code quality score |
-| `files_modified` | JSON | Changed files |
-| `diffs` | JSON | Code diffs by language |
+| `security_scan_passed` | BOOLEAN | Security check results |
+| `files_modified` | JSON | List of modified files |
+| `files_added` | JSON | List of new files created |
+| `files_deleted` | JSON | List of deleted files |
+| `diffs` | JSON | Code diffs organized by language |
+| `execution_duration_ms` | INTEGER | Time taken to execute (milliseconds) |
+| `agent_output_summary` | TEXT | Summary of agent output |
+| `validation_results` | JSON | Test/lint/validation details |
+| `saliency_metadata` | JSON | Diff saliency analysis data |
+
+### Relationships
+
+```
+projects ||--o{ refined_prompts : "has many"
+projects ||--o{ prompt_history : "has many"
+refined_prompts ||--o{ prompt_history : "has many"
+refined_prompts ||--o{ refined_prompts : "refinement chain"
+```
+
+- **projects → refined_prompts**: One-to-many (a project has multiple prompts)
+- **projects → prompt_history**: One-to-many (a project has multiple history entries)
+- **refined_prompts → prompt_history**: One-to-many (a prompt has multiple execution records)
+- **refined_prompts → refined_prompts**: Self-referential (refinement chains via `prior_refinement_id`)
+
+### Indexes
+
+Performance-optimized indexes on frequently queried columns:
+
+| Table | Column(s) | Purpose |
+|-------|-----------|---------|
+| `refined_prompts` | `prompt_key` | Unique lookup by public key |
+| `refined_prompts` | `agent_type` | Filter by agent specialization |
+| `refined_prompts` | `main_language` | Filter by language |
+| `refined_prompts` | `domain` | Filter by domain/topic |
+| `refined_prompts` | `project_id` | Join with projects table |
+| `refined_prompts` | `embedding` | Vector similarity search (pgvector HNSW) |
+| `projects` | `project_name` | Unique project name lookup |
+| `projects` | `main_language` | Filter by language |
+| `prompt_history` | `prompt_id` | Join with refined_prompts |
+| `prompt_history` | `project_id` | Join with projects table |
 
 ## 🧪 Development
 
