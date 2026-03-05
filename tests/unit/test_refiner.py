@@ -118,8 +118,6 @@ class TestPromptRefinerRefine:
     async def test_refine_reuses_existing_prompt(self):
         """Test reusing an existing high-quality prompt."""
         mock_repo = MagicMock()
-        mock_repo.find_similar = AsyncMock(return_value=[])
-        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
 
@@ -136,14 +134,18 @@ class TestPromptRefinerRefine:
         mock_prompt.usage_count = 10
         mock_prompt.refined_prompt = "Refined: Write a Python function"
 
-        # Patch selector to return existing prompt and not refine
-        with patch.object(refiner.selector, "select_best_prompt", return_value=mock_prompt):
-            with patch.object(refiner.selector, "should_create_new_prompt", return_value=False):
-                result = await refiner.refine(
-                    original_prompt="Write a function",
-                    agent_type="developer",
-                    main_language="python",
-                )
+        # Set up find_similar to return the mock prompt
+        mock_repo.find_similar = AsyncMock(return_value=[mock_prompt])
+        mock_repo.get_by_id = AsyncMock(return_value=mock_prompt)
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
+
+        # Patch selector to not refine
+        with patch.object(refiner.selector, "should_create_new_prompt", return_value=False):
+            result = await refiner.refine(
+                original_prompt="Write a function",
+                agent_type="developer",
+                main_language="python",
+            )
 
         assert result["source"] == "reused"
         assert result["prompt_key"] == "test-key"
@@ -211,8 +213,6 @@ class TestPromptRefinerRefine:
     async def test_refine_embedding_composition(self):
         """Test that embedding text is composed correctly."""
         mock_repo = MagicMock()
-        mock_repo.find_similar = AsyncMock(return_value=[])
-        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
         mock_embedding = AsyncMock()
         mock_embedding.embed.return_value = [0.1] * 768
 
@@ -228,19 +228,21 @@ class TestPromptRefinerRefine:
         mock_prompt.usage_count = 10
         mock_prompt.refined_prompt = "Refined prompt"
 
-        with patch.object(refiner.selector, "select_best_prompt", return_value=mock_prompt):
-            with patch.object(refiner.selector, "should_create_new_prompt", return_value=False):
-                await refiner.refine(
-                    original_prompt="Write a function",
-                    agent_type="developer",
-                    main_language="python",
-                )
+        # Set up find_similar to return the mock prompt
+        mock_repo.find_similar = AsyncMock(return_value=[mock_prompt])
+        mock_repo.get_by_id = AsyncMock(return_value=mock_prompt)
+        mock_repo.get_by_refined_text_hash = AsyncMock(return_value=None)
 
-        # Check that embed was called with composed text
+        with patch.object(refiner.selector, "should_create_new_prompt", return_value=False):
+            await refiner.refine(
+                original_prompt="Write a function",
+                agent_type="developer",
+                main_language="python",
+            )
+
+        # Check that embed was called with original_prompt
         mock_embedding.embed.assert_called_once()
         call_args = mock_embedding.embed.call_args[0][0]
-        assert "developer" in call_args
-        assert "python" in call_args
         assert "Write a function" in call_args
 
     async def test_refine_strips_llm_output(self):

@@ -1,20 +1,27 @@
 import re
 from typing import Optional
 
+from simpa.utils.logging import get_logger
+from simpa.prompts.selector import PromptSelector
+
+logger = get_logger(__name__)
+
+REFINEMENT_SYSTEM_PROMPT = """You are a prompt refinement specialist. Take raw requests and convert them to clean, structured specifications. Output ONLY requirements, constraints, and acceptance criteria. NEVER include code, implementation details, line counts, or technical scaffolding.
+
+Before writing each line of the refined prompt, review it to ensure you are NOT writing code. If a line contains code patterns (```, class/def definitions, type annotations like ->, import statements), stop and rewrite it as requirements-only."""
+
 
 class PromptRefiner:
     def __init__(self, repository, embedding_service, llm_service):
         self.repository = repository
         self.embedding_service = embedding_service
         self.llm_service = llm_service
+        self.selector = PromptSelector()
 
     async def refine(self, original_prompt: str, agent_type: str, main_language: str = None,
                      other_languages: list = None, domain: str = None, tags: list = None,
-                     project_id: str = None):
+                     project_id: str = None, original_hash: str = None, context: dict = None):
         """Main entry point for refinement."""
-        from simpa.utils.logging import get_logger
-        logger = get_logger(__name__)
-
         logger.info("refine_prompt_started", prompt_length=len(original_prompt), agent_type=agent_type)
 
         embedding = await self.embedding_service.embed(original_prompt)
@@ -26,17 +33,19 @@ class PromptRefiner:
         )
 
         if similar_prompts:
-            best_prompt = max(similar_prompts, key=lambda p: p.average_score)
-            if best_prompt.average_score >= 4.0:
+            # Use selector to decide whether to reuse or refine
+            best_prompt = self.selector.select_best_prompt(similar_prompts)
+            logger.info("selector_best_prompt", best_prompt_id=str(best_prompt.id) if best_prompt else None, avg_score=best_prompt.average_score if best_prompt else None)
+            
+            if best_prompt and best_prompt.average_score >= 4.0:
                 candidate = await self.repository.get_by_id(best_prompt.id)
-                llm_context = self.build_context(
-                    original_prompt=original_prompt,
-                    agent_type=agent_type,
-                    similar_prompts=similar_prompts
-                )
-
-                is_appropriate = await self._validate_prompt_appropriateness(candidate, llm_context)
-                if is_appropriate:
+                
+                # Check if we should create new or reuse
+                should_create = self.selector.should_create_new_prompt(best_prompt)
+                logger.info("selector_decision", should_create=should_create)
+                
+                if not should_create:
+                    # Reuse existing prompt
                     logger.info("returning_existing_prompt", prompt_id=str(best_prompt.id), score=best_prompt.average_score)
                     return {
                         "refined_prompt": candidate.refined_prompt,
@@ -49,19 +58,20 @@ class PromptRefiner:
                         "confidence_score": best_prompt.average_score / 5.0,
                     }
                 else:
-                    logger.info("selector_reused_rejected_not_appropriate", prompt_id=str(best_prompt.id))
+                    logger.info("selector_chose_to_refine", prompt_id=str(best_prompt.id), score=best_prompt.average_score)
+            else:
+                logger.info("prompt_score_too_low", best_prompt_score=best_prompt.average_score if best_prompt else None)
 
         logger.info("calling_llm_for_refinement")
-        llm_context = self.build_context(
+        llm_context = await self.build_context(
             original_prompt=original_prompt,
             agent_type=agent_type,
-            similar_prompts=similar_prompts
+            similar_prompts=similar_prompts,
+            main_language=main_language
         )
 
         llm_response = await self.llm_service.complete(
-            system_prompt="""You are a prompt refinement specialist. Take raw requests and convert them to clean, structured specifications. Output ONLY requirements, constraints, and acceptance criteria. NEVER include code, implementation details, line counts, or technical scaffolding.
-
-Before writing each line of the refined prompt, review it to ensure you are NOT writing code. If a line contains code patterns (```, class/def definitions, type annotations like ->, import statements), stop and rewrite it as requirements-only.""",
+            system_prompt=REFINEMENT_SYSTEM_PROMPT,
             user_prompt=llm_context
         )
 
@@ -184,23 +194,28 @@ Before writing each line of the refined prompt, review it to ensure you are NOT 
 
         return llm_response.strip()
 
-    def build_context(self, original_prompt, agent_type, similar_prompts):
+    async def build_context(self, original_prompt, agent_type, similar_prompts, main_language=None):
         """Build the context for the LLM."""
         context_parts = [
             f"Original Request: {original_prompt}",
             f"Agent Type: {agent_type}",
-            "",
         ]
+        
+        if main_language:
+            context_parts.append(f"Primary Language: {main_language}")
+        
+        context_parts.append("")
 
         if similar_prompts:
+            context_parts.append(f"Similar Successful Prompts ({len(similar_prompts)} found):")
             context_parts.extend([
-                "Similar Successful Prompts:",
                 "⚠️ WARNING: Examples below may contain CODE which is LOW QUALITY.",
                 "HIGH QUALITY prompts contain only REQUIREMENTS with ZERO code.",
                 "",
             ])
-            for p in similar_prompts[:3]:
-                context_parts.append(f"Score {p.average_score}: {p.refined_prompt[:200]}...")
+            for i, p in enumerate(similar_prompts[:3], 1):
+                context_parts.append(f"Example {i} (Score: {p.average_score:.2f}, Usage: {p.usage_count}):")
+                context_parts.append(f"Refined: {p.refined_prompt[:200]}...")
                 context_parts.append("")
 
         context_parts.extend([
