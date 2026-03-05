@@ -6,10 +6,12 @@ from typing import Any
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from simpa.utils.logging import get_logger, log_trace
 
 from simpa.config import settings
 from simpa.db.models import PromptHistory, Project, RefinedPrompt
 
+logger = get_logger(__name__)
 
 class RefinedPromptRepository:
     """Repository for RefinedPrompt operations with hash-based fast path."""
@@ -180,7 +182,9 @@ class RefinedPromptRepository:
             .order_by(RefinedPrompt.embedding.cosine_distance(embedding))
             .limit(limit)
         )
-        return list(result.scalars().all())
+        prompts = list(result.scalars().all())
+        log_trace(logger, f"Vector: find_similar {len(prompts)} similar prompts for agent type '{agent_type}'")
+        return prompts
 
     async def get_by_refined_text_hash(
         self,
@@ -223,6 +227,9 @@ class RefinedPromptRepository:
             .order_by(RefinedPrompt.average_score.desc())
             .limit(limit)
         )
+        log_trace(logger, f"Vector: get_best_for_agent {len(result.scalars().all())} best prompts for agent")
+        # trace all RefinementPrompt.id values in result
+        log_trace(logger, f"All refind_prompt ids: {[p.id for p in result.scalars().all()]}")
         return list(result.scalars().all())
 
     async def update_stats(
