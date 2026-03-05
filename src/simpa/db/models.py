@@ -170,6 +170,13 @@ class RefinedPrompt(Base):
     score_dist_4: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     score_dist_5: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
+    # Scope context (JSON blob for scope, focus, target_dirs, etc.)
+    context: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+    )
+
     # Soft delete for audit trail
     is_active: Mapped[bool] = mapped_column(
         Boolean,
@@ -273,6 +280,12 @@ class Project(Base):
 
     # Dependencies
     library_dependencies: Mapped[list[str] | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+    # Project structure hints for scoping (src_dirs, test_dirs, entry_points, exclude)
+    project_structure: Mapped[dict[str, Any] | None] = mapped_column(
         JSON,
         nullable=True,
     )

@@ -34,6 +34,7 @@ class RefinedPromptRepository:
         refinement_version: int = 1,
         project_id: uuid.UUID | None = None,
         refinement_type: str = "sigmoid",
+        context: dict | None = None,
     ) -> RefinedPrompt:
         """Create a new refined prompt record."""
         prompt = RefinedPrompt(
@@ -50,6 +51,7 @@ class RefinedPromptRepository:
             refinement_version=refinement_version,
             project_id=project_id,
             refinement_type=refinement_type,
+            context=context,
         )
         # Increment refinement version if this is a refinement of an existing prompt
         if prior_refinement_id:
@@ -271,6 +273,7 @@ class ProjectRepository:
         main_language: str | None = None,
         other_languages: list[str] | None = None,
         library_dependencies: list[str] | None = None,
+        project_structure: dict[str, Any] | None = None,
     ) -> Project:
         """Create a new project record."""
         project = Project(
@@ -279,6 +282,7 @@ class ProjectRepository:
             main_language=main_language,
             other_languages=other_languages or [],
             library_dependencies=library_dependencies or [],
+            project_structure=project_structure,
         )
         self.session.add(project)
         await self.session.flush()

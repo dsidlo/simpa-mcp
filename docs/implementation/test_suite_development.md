@@ -193,6 +193,129 @@ async def postgres_container():
     container.stop()
 ```
 
+### 8. LLM Prompt Refinement: System vs User Prompt Attention
+
+**Challenge:** Model (`ollama/llama3.2`) was ignoring system prompt constraints, generating code blocks and line counts despite explicit prohibitions.
+
+**Root Causes Discovered:**
+
+| Issue | Evidence | Solution |
+|-------|----------|----------|
+| **Example Contamination** | Old prompts with code included as "examples" in context | Removed similar prompts from context entirely |
+| **LLM Attention Bias** | System prompt ignored; user prompt followed constraints | Reinforce critical constraints in both locations |
+| **The "Taint" Effect** | Words like "create script" trigger coding mode before constraints | User prompt must open with constraints first |
+
+**Before (Failed):**
+```python
+# System prompt: "NEVER use code blocks"
+# User prompt included: "Example 1 (Score: 4.0): [old code-heavy prompt]"
+# Result: 4,800 chars of code blocks, line counts, class definitions
+```
+
+**The "Aha Moment" - Reframing:**
+
+The breakthrough came from realizing the LLM was identifying as the **coder**, not the **specification writer**. When users said "create a script", the LLM thought "I should write that script" instead of "I should write specs for a coder to implement."
+
+**After (Working):**
+```python
+# System prompt now includes:
+"""
+## YOUR CORE MISSION - REFRAMING REQUESTS:
+When the user asks for code, scripts, or implementation, you MUST reframe it:
+
+❌ WRONG: "Create a Python script" → You write code yourself
+✅ RIGHT: "Create a Python script" → You write requirements FOR AN AGENT
+
+**You are a REQUIREMENTS WRITER, not a CODER.**
+Think of yourself as a project manager writing a spec for developers.
+NEVER write implementation. ALWAYS write specification.
+"""
+
+# User prompt opens with reinforcement:
+"""
+⚠️  CRITICAL CONSTRAINTS (MUST FOLLOW):
+- NEVER use code blocks (```) or markdown code fences
+- NEVER write function/class definitions
+- NEVER specify line counts like '(40 lines)'
+- Output ONLY requirements describing WHAT, not HOW
+
+🎯 REFRAMING INSTRUCTION:
+If the user asks you to 'create a script', 'write code', 'implement', or similar:
+- DO NOT write any code or implementation details
+- Instead, write requirements that will be PASSED TO AN AGENT who will do the actual coding
+- Your job is to prepare the ASSIGNMENT for the coder, not to BE the coder
+- Focus on: What should the agent deliver? What are the acceptance criteria?
+"""
+# Result: 337 chars, clean requirements only
+```
+
+**Testing Strategy:**
+- Clear LLM cache between runs to eliminate false positives
+- Print exact context sent to LLM for inspection
+- Test with "tainted" inputs (verbose code requests) as hardest case
+- Isolate system vs user prompt effectiveness separately
+
+**Working Architecture:**
+```
+System prompt:  General guidelines, tone, role definition
+      ↓
+User prompt:   CRITICAL CONSTRAINTS (reinforcement) ⚠️
+               Original request
+               Task instructions
+               Output format
+      ↓
+LLM Call:      Clean output ✓
+```
+
+**Additional Discovery - Role Intent & Structured Format:**
+
+We found that simply telling the LLM to "write requirements" wasn't enough. The refined prompts needed two more elements:
+
+1. **Role Intent**: Explicitly stating WHO will receive the refined prompt:
+```python
+# Added to user prompt context:
+"ROLE INTENT: Senior Python Developer who will write production-ready code"
+# This helps the LLM write requirements appropriate for the target agent's expertise level
+```
+
+2. **Structured Output Format**: Enforcing a specific 8-section format:
+```
+ROLE: [Agent expertise/persona]
+GOAL: [Clear objective]
+CONSTRAINTS: [Boundaries]
+CONTEXT: [Background]
+OUTPUT: [Deliverable format]
+SUCCESS: [Acceptance criteria]
+AUTONOMY: [Decision scope]
+FALLBACK: [What to do when blocked]
+```
+
+This structure ensures consistency and completeness without the LLM inventing implementation details.
+
+**Updated Context Flow:**
+```
+User prompt now includes:
+  - ROLE INTENT (who receives this)
+  - Original request
+  - CRITICAL CONSTRAINTS
+  - REFRAMING INSTRUCTION
+  - OUTPUT FORMAT (8 sections)
+  ↓
+LLM Call
+  ↓
+Structured requirements in ROLE/GOAL/CONSTRAINTS format ✓
+```
+
+**Lessons:**
+1. System prompts set the stage; user prompts enforce the rules
+2. Never trust training data without quality filtering
+3. The **opening words** of the user prompt matter as much as constraints
+4. LLMs may pay more attention to user prompts than system prompts (model-dependent)
+5. **Reframing is critical:** When users ask for code, the LLM must understand it's writing a specification FOR another agent, not writing the code itself
+6. **Self-identification matters:** Explicitly telling the LLM "You are a REQUIREMENTS WRITER, not a CODER" changes its role identity
+7. **Role intent bridges the gap:** Explicitly stating who will receive the refined prompt helps the LLM calibrate the requirements appropriately
+8. **Structured format prevents hallucination:** Forcing specific sections (ROLE, GOAL, CONSTRAINTS, etc.) prevents the LLM from drifting into implementation details
+
 ## Key Takeaways
 
 1. **Fixture Scoping Matters:** `session`-scoped for containers, `function`-scoped for isolation
@@ -201,6 +324,7 @@ async def postgres_container():
 4. **Vector Math Awareness:** Understand cosine similarity behavior with constant vectors
 5. **Pydantic Validation Timing:** Validation happens at `__init__`, not usage
 6. **Integration Testing Complexity:** Async + DB + containers requires careful orchestration
+7. **LLM Prompt Testing:** Test exact context sent; cache invalidation; contamination isolation; role intent calibration; structured output enforcement
 
 ## Current Status
 

@@ -175,6 +175,10 @@ class CreateProjectRequest(BaseModel):
     main_language: str | None = Field(default=None, min_length=1, max_length=50)
     other_languages: list[str] | None = Field(default=None, max_length=20)
     library_dependencies: list[str] | None = Field(default=None, max_length=100)
+    project_structure: dict[str, Any] | None = Field(
+        default=None,
+        description="Project structure hints: src_dirs, test_dirs, entry_points, exclude paths"
+    )
 
     @field_validator("project_name")
     @classmethod
@@ -191,6 +195,7 @@ class CreateProjectResponse(BaseModel):
     project_name: str
     created_at: str
     description: str | None = None
+    project_structure: dict[str, Any] | None = None
     success: bool = True  # Added for test compatibility
 
 
@@ -215,6 +220,7 @@ class GetProjectResponse(BaseModel):
     main_language: str | None
     other_languages: list[str] | None
     library_dependencies: list[str] | None
+    project_structure: dict[str, Any] | None
     prompt_count: int
     project_created_at: str
     project_updated_at: str | None
@@ -234,6 +240,10 @@ class ProjectSummary(BaseModel):
     main_language: str | None
     prompt_count: int
     project_created_at: str
+    project_structure: dict[str, Any] | None = Field(
+        default=None,
+        description="Structure hints for scoping: src_dirs, test_dirs, entry_points, exclude"
+    )
 
 
 class ListProjectsResponse(BaseModel):
@@ -328,6 +338,14 @@ async def refine_prompt(
     Given an original prompt and context, either selects an existing refined prompt
     or creates a new one optimized for the agent type and language.
     
+    **Scoping Options (Optional but Recommended):**
+    To improve focus and reduce context overload, include in the `context` dict:
+    - `target_dirs`: List of directories the agent should focus on (e.g., ["src/", "tests/"])
+    - `target_files`: Specific files to modify (e.g., ["src/main.py", "src/config.py"])
+    - `exclude_paths`: Paths to ignore (e.g., [".venv/", "node_modules/"])
+    - `scope`: High-level scope description (e.g., "backend API layer only")
+    - `focus`: Priority aspects (e.g., ["performance", "security", "error-handling"])
+    
     **Note:** A project_id is required. If not provided, the response will include
     a list of existing projects or instructions to create one. The agent should:
     1. Call list_projects to see available projects, or
@@ -347,7 +365,7 @@ async def refine_prompt(
         }
         ```
         
-        With context, tags, and project:
+        With scope, context, and project:
         ```json
         {
           "request": {
@@ -361,7 +379,10 @@ async def refine_prompt(
             "context": {
               "scale": "high-traffic",
               "budget": "moderate",
-              "timeline": "3 months"
+              "timeline": "3 months",
+              "target_dirs": ["src/api/", "src/services/"],
+              "scope": "API layer and service orchestration only",
+              "focus": ["scalability", "observability"]
             }
           }
         }
@@ -505,6 +526,11 @@ async def update_prompt_results(
 
     Records the outcome of using a refined prompt and updates
     the prompt's statistics for future refinement decisions.
+
+    **Scoping Feedback:**
+    Use `files_modified` and `files_added` to record which files were actually
+    touched. This helps the system understand the effective scope of the prompt
+    and can be used to suggest narrower scopes for similar future tasks.
 
     Examples:
         Basic result update:
@@ -660,6 +686,15 @@ async def create_project(
     Creates a project with language and dependency metadata to enable
     better prompt selection based on project context.
 
+    **Project Structure & Scoping:**
+    Projects can define their default structure via `project_structure`:
+    - Default directories agents should focus on (e.g., ["src/", "tests/"])
+    - Default exclusions (e.g., [".venv/", "node_modules/"])
+    - Known entry points (e.g., ["src/main.py", "src/app.py"])
+
+    This helps downstream agents understand the project layout and scope 
+    their work appropriately without needing to explore the entire codebase.
+
     Examples:
         Basic project creation:
         ```json
@@ -672,7 +707,7 @@ async def create_project(
         }
         ```
 
-        With library dependencies and multiple languages:
+        With library dependencies and structure hints:
         ```json
         {
           "request": {
@@ -680,7 +715,13 @@ async def create_project(
             "description": "Microservices-based e-commerce platform with PostgreSQL database",
             "main_language": "python",
             "other_languages": ["javascript", "sql", "yaml"],
-            "library_dependencies": ["fastapi", "sqlalchemy", "pydantic", "pytest"]
+            "library_dependencies": ["fastapi", "sqlalchemy", "pydantic", "pytest"],
+            "project_structure": {
+              "src_dirs": ["src/api/", "src/services/", "src/models/"],
+              "test_dirs": ["tests/"],
+              "entry_points": ["src/main.py"],
+              "exclude": [".venv/", "__pycache__/", "*.pyc"]
+            }
           }
         }
         ```
@@ -721,6 +762,7 @@ async def create_project(
                 main_language=request.main_language,
                 other_languages=request.other_languages,
                 library_dependencies=request.library_dependencies,
+                project_structure=request.project_structure,
             )
 
             await session.commit()
@@ -752,12 +794,35 @@ async def get_project(
 
     Look up a project by either its ID (UUID) or name.
 
+    **Project Scoping for Agents:**
+    Returns `project_structure` which defines default scoping for this project:
+    - `src_dirs`: Recommended directories to focus on
+    - `test_dirs`: Test directory locations
+    - `entry_points`: Main entry point files
+    - `exclude`: Paths to ignore
+
+    Use this structure when refining prompts to help agents understand the
+    codebase layout and scope their work appropriately.
+
     Examples:
-        Get by project ID:
+        Get by project ID (returns structure):
         ```json
         {
           "request": {
             "project_id": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        }
+        ```
+        Response:
+        ```json
+        {
+          "project_id": "...",
+          "project_name": "my-api",
+          "project_structure": {
+            "src_dirs": ["src/api/", "src/services/"],
+            "test_dirs": ["tests/"],
+            "entry_points": ["src/main.py"],
+            "exclude": [".venv/", "__pycache__/"]
           }
         }
         ```
@@ -775,7 +840,7 @@ async def get_project(
         request: Get project request with project_id or project_name
 
     Returns:
-        Project details
+        Project details including structure hints for agent scoping
     """
     trace_id = str(uuid.uuid4())
     log = logger.bind(
@@ -818,6 +883,7 @@ async def get_project(
                 main_language=project.main_language,
                 other_languages=project.other_languages,
                 library_dependencies=project.library_dependencies,
+                project_structure=project.project_structure,
                 prompt_count=prompt_count,
                 project_created_at=project.created_at.isoformat(),
                 project_updated_at=project.updated_at.isoformat() if project.updated_at else None,
@@ -838,6 +904,16 @@ async def list_projects(
     Retrieves a paginated list of projects, optionally filtered by
     programming language.
 
+    **Project Scoping:**
+    Each project may include `project_structure` metadata that defines:
+    - `src_dirs`: Recommended source directories (e.g., ["src/", "lib/"])
+    - `test_dirs`: Test directories (e.g., ["tests/"])
+    - `entry_points`: Main entry points (e.g., ["src/main.py"])
+    - `exclude`: Paths to ignore (e.g., [".venv/", "__pycache__/"])
+
+    Use `get_project` to retrieve full structure details for a specific project,
+    then use this information when scoping agent work via `refine_prompt`.
+
     Examples:
         List all projects:
         ```json
@@ -854,6 +930,20 @@ async def list_projects(
             "limit": 10,
             "offset": 0
           }
+        }
+        ```
+
+        Response includes project_structure hint:
+        ```json
+        {
+          "projects": [{
+            "project_id": "...",
+            "project_name": "my-api",
+            "project_structure": {
+              "src_dirs": ["src/api/", "src/services/"],
+              "test_dirs": ["tests/"]
+            }
+          }]
         }
         ```
 
@@ -892,6 +982,7 @@ async def list_projects(
                         main_language=project.main_language,
                         prompt_count=len(project.prompts) if project.prompts else 0,
                         project_created_at=project.created_at.isoformat(),
+                        project_structure=project.project_structure,
                     )
                 )
 
