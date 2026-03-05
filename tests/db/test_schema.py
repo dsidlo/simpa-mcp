@@ -80,11 +80,6 @@ class TestRefinedPromptsTableSchema:
             "updated_at",
             "usage_count",
             "average_score",
-            "score_dist_1",
-            "score_dist_2",
-            "score_dist_3",
-            "score_dist_4",
-            "score_dist_5",
             "prior_refinement_id",
         ]
         
@@ -101,17 +96,6 @@ class TestRefinedPromptsTableSchema:
         # Both should be datetime/timestamp types
         assert "date" in str(created_col["type"]).lower() or "timestamp" in str(created_col["type"]).lower()
         assert "date" in str(updated_col["type"]).lower() or "timestamp" in str(updated_col["type"]).lower()
-
-    async def test_score_distribution_columns(self, db_session):
-        """Test score distribution columns exist (score_dist_1 to score_dist_5)."""
-        columns = await run_sync_inspect(db_session.bind, "get_columns", "refined_prompts")
-        column_names = [c["name"] for c in columns]
-        
-        for i in range(1, 6):
-            col_name = f"score_dist_{i}"
-            assert col_name in column_names, f"Missing column: {col_name}"
-            dist_col = next(c for c in columns if c["name"] == col_name)
-            assert "int" in str(dist_col["type"]).lower(), f"{col_name} should be integer type"
 
     async def test_indexes_exist(self, db_session):
         """Test required indexes exist."""
@@ -242,7 +226,6 @@ class TestForeignKeyIntegrity:
         assert updated is not None
         assert updated.usage_count == 1
         assert updated.average_score == pytest.approx(4.5, abs=0.01)
-        assert updated.score_dist_4 == 1
 
     async def test_find_similar_by_agent_type(self, db_session):
         """Test finding similar prompts filters by agent_type."""
@@ -389,19 +372,12 @@ class TestRefinedPromptStatsUpdate:
             embedding=[0.0] * 768,
             usage_count=0,
             average_score=0.0,
-            score_dist_1=0,
-            score_dist_2=0,
-            score_dist_3=0,
-            score_dist_4=0,
-            score_dist_5=0,
         )
         
         prompt.update_score_stats(4.0)
         
         assert prompt.usage_count == 1
         assert prompt.average_score == 4.0
-        assert prompt.score_dist_4 == 1
-        assert prompt.get_score_distribution()["4"] == 1
 
     async def test_stats_update_multiple_scores(self):
         """Test updating stats with multiple scores."""
@@ -413,11 +389,6 @@ class TestRefinedPromptStatsUpdate:
             embedding=[0.0] * 768,
             usage_count=2,
             average_score=3.5,
-            score_dist_1=0,
-            score_dist_2=0,
-            score_dist_3=1,
-            score_dist_4=1,
-            score_dist_5=0,
         )
         
         prompt.update_score_stats(5.0)
@@ -425,8 +396,6 @@ class TestRefinedPromptStatsUpdate:
         assert prompt.usage_count == 3
         # (3.5 * 2 + 5.0) / 3 = 4.0
         assert prompt.average_score == pytest.approx(4.0, abs=0.01)
-        assert prompt.score_dist_5 == 1
-        assert prompt.get_score_distribution()["5"] == 1
 
 
 @pytest.mark.integration

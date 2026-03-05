@@ -1,14 +1,47 @@
 #!/usr/bin/env python3
 """SIMPA MCP Server entry point."""
 
-# CRITICAL: Must set environment variables BEFORE any imports that use them
+import argparse
 import os
+import sys
+from pathlib import Path
+
+# CRITICAL: Must parse --env arg VERY EARLY (before any imports that use environment)
+def _load_env_file():
+    """Parse --env argument and load .env file before other imports."""
+    # Pre-parse just the --env arg
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--env", type=str, default=None, dest="env_file")
+    args, _ = parser.parse_known_args()
+    
+    # Determine which .env file to load
+    if args.env_file:
+        # User specified a custom .env file
+        env_path = Path(args.env_file).expanduser().resolve()
+        if env_path.exists():
+            from dotenv import load_dotenv
+            load_dotenv(env_path, override=True)
+            # Store the path for logging later
+            os.environ["_SIMPA_ENV_FILE"] = str(env_path)
+        else:
+            print(f"Warning: Specified --env file not found: {env_path}", file=sys.stderr)
+    elif (Path.home() / ".env").exists():
+        # Default: load ~/.env if it exists
+        from dotenv import load_dotenv
+        load_dotenv(Path.home() / ".env")
+        os.environ["_SIMPA_ENV_FILE"] = str(Path.home() / ".env")
+    
+    return args.env_file
+
+
+# Load .env file BEFORE any other imports
+_custom_env_file = _load_env_file()
+
+# Now safe to set other environment variables
 os.environ["LITELLM_LOG"] = "ERROR"  # Silence LiteLLM to prevent stdout pollution
 os.environ["FASTMCP_SHOW_SERVER_BANNER"] = "false"  # Silence FastMCP banner
 
-import argparse
 import asyncio
-import sys
 
 # Must configure logging BEFORE any imports that might use the database
 def setup_logging_early():
@@ -105,15 +138,28 @@ def main():
         dest="project_id_required",
         help="Require project_id for all prompt refinement requests",
     )
+    parser.add_argument(
+        "--env",
+        type=str,
+        default="~/.env",
+        metavar="PATH",
+        help="Path to .env file - default:~/.env (also checks ./.env)",
+    )
 
     args = parser.parse_args()
     
-    # Log startup
+    # Log which env file is being used
+    env_file = os.environ.get("_SIMPA_ENV_FILE", "~/.env")
+    if not Path(env_file).exists() and Path(".env").exists():
+        env_file = "./.env"
+    
+    # Log startup with env file info
     logger.info(
         "simpa_mcp_server_starting",
         transport=args.transport or "stdio",
         log_level=args.log_level,
         log_file=args.log_file,
+        env_file=env_file if Path(env_file).exists() else "none",
     )
 
     # Override transport if provided
