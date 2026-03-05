@@ -284,11 +284,6 @@ async def high_score_prompt(
         refined_prompt="Refined test prompt",
         usage_count=10,
         average_score=4.5,
-        score_dist_1=0,
-        score_dist_2=0,
-        score_dist_3=1,
-        score_dist_4=2,
-        score_dist_5=7,
     )
     db_session.add(prompt)
     await db_session.flush()
@@ -311,11 +306,6 @@ async def low_score_prompt(
         refined_prompt="Refined test prompt",
         usage_count=5,
         average_score=1.5,
-        score_dist_1=3,
-        score_dist_2=2,
-        score_dist_3=0,
-        score_dist_4=0,
-        score_dist_5=0,
     )
     db_session.add(prompt)
     await db_session.flush()
@@ -338,11 +328,6 @@ async def prompt_with_history(
         refined_prompt="Refined function prompt",
         usage_count=3,
         average_score=3.5,
-        score_dist_1=0,
-        score_dist_2=0,
-        score_dist_3=1,
-        score_dist_4=2,
-        score_dist_5=0,
     )
     db_session.add(prompt)
     await db_session.flush()
