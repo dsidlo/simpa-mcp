@@ -142,16 +142,21 @@ Why: Keeps changes to specific files and prevents accidental modifications outsi
 ```
 Example...
 ```
-ROLE: Senior Python Developer
-GOAL: Implement audio processing node for ComfyUI
-CONSTRAINTS: No new dependencies, maintain existing API signatures
-CONTEXT: Part of SoX_Effects repository, follows BMad workflow patterns
-OUTPUT: Code blocks with file paths, brief change summary
-SUCCESS: Passes existing tests, no linting warnings
-AUTONOMY: You may create helper functions, ask before modifying public interfaces
-FALLBACK: If uncertain, propose options rather than guessing
-PROJECT_DIRS: Scope to project directories and files, avoid unintended changes outside the project's defined scope
-PROJECT_FILES: Scope to project files and directories, avoid unintended changes outside the project's defined scope
+ROLE: Software Architect
+GOAL: Design a caching strategy for the product catalog.
+CONSTRAINTS: Output will be descriptive only; no actual implementation code.
+REQUIREMENTS:
+- Identify data access patterns (read-heavy, write-heavy, or mixed)
+- Design cache-invalidation strategy (time-based, event-driven, or hybrid)
+- Define cache key structure and naming conventions
+- Specify cache-aside, write-through, or write-behind patterns
+- Address cache consistency, eviction policies, and TTL configuration
+- Consider multi-tier caching (in-memory + distributed)
+- Document potential issues: stale data, thundering herd, cache penetration
+OUTPUT: Architecture document detailing caching strategy.
+SUCCESS: Design addresses scalability, performance, and data consistency.
+AUTONOMY: Choose appropriate caching technology (Redis, Memcached, Caffeine).
+FALLBACK: If data volume or access patterns are unclear, document assumptions.
 ```
 
 GOOD (requirements only):
@@ -477,14 +482,24 @@ class PromptRefiner:
             "📋 OUTPUT FORMAT (MUST USE THIS STRUCTURE):",
             "Your refined prompt MUST use this exact section format:",
             "",
-            "ROLE: [Agent expertise/persona - the coder who will receive this]",
-            "GOAL: [Clear objective - what should be delivered]",
-            "CONSTRAINTS: [Boundaries - what NOT to do]",
-            "CONTEXT: [Background information]",
-            "OUTPUT: [Expected deliverable format]",
-            "SUCCESS: [Acceptance criteria]",
-            "AUTONOMY: [Independent decisions vs confirmation needed]",
-            "FALLBACK: [What to do when blocked]",
+            "ROLE: Security-Focused Code Reviewer",
+            "GOAL: Review error handling patterns in the codebase.",
+            "CONSTRAINTS: Review only within assigned scope and files:",
+            "  - target_dirs: src/services/, src/utils/",
+            "  - target_files: src/services/user_service.py",
+            "  - focus: security, logging, user-experience",
+            "  - scope: error handling patterns only",
+            "CONTEXT: Production code review process",
+            "OUTPUT: Line-by-line comments and summary report",
+            "SUCCESS: Critical issues identified, recommendations actionable",
+            "AUTONOMY: Can use static analysis tools within scope",
+            "FALLBACK: Ask if scope unclear",
+            "Review Checklist:",
+            "- Security: Exception leaks sensitive data, proper sanitization",
+            "- Logging: Appropriate log levels, no PII exposure",
+            "- User Experience: Helpful error messages, graceful degradation",
+            "- Code Quality: Consistent patterns, avoid catch-all exceptions",
+            "- Documentation: Error scenarios documented, recovery paths clear",
             "",
             "Task: Convert the original request using the section format above.",
             "Output format: REFINED_PROMPT: <your refined prompt in section format>",
