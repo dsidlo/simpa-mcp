@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { spawn, ChildProcess } from "child_process";
 import * as readline from "readline";
 import * as path from "path";
+import * as os from "os";
 
 interface PendingRequest {
   resolve: (value: any) => void;
@@ -18,30 +19,19 @@ export default function (pi: ExtensionAPI) {
   let readyPromise: Promise<void> | null = null;
 
   // Configuration
-  const PYTHON = process.env.SIMPA_PYTHON || "python";
+  const SIMPA_ROOT = process.env.SIMPA_ROOT || path.join(os.homedir(), ".pi");
   const MODULE = "simpa.jsonrpc_server";
 
-  // Auto-detect SIMPA project root
-  const possibleRoots = [
-    process.env.SIMPA_ROOT,
-    "/home/dsidlo/workspace/simpa-mcp",
-    path.join(process.env.HOME || "/home/dsidlo", "workspace/simpa-mcp"),
-    path.join(process.cwd(), "simpa-mcp"),
-  ].filter(Boolean) as string[];
-
-  function getSimpaRoot(): string | null {
-    for (const root of possibleRoots) {
-      try {
-        require("fs").accessSync(path.join(root, "src", "simpa", "jsonrpc_server.py"));
-        return root;
-      } catch {
-        continue;
-      }
+  // Verify simpa is installed
+  function verifySimpaInstallation(): boolean {
+    try {
+      const jsonrpcPath = path.join(SIMPA_ROOT, "simpa", "jsonrpc_server.py");
+      require("fs").accessSync(jsonrpcPath);
+      return true;
+    } catch {
+      return false;
     }
-    return null;
   }
-
-  const simpaRoot = getSimpaRoot();
 
   function getRequestId(): string {
     return `${++requestId}-${Date.now()}`;
@@ -57,16 +47,24 @@ export default function (pi: ExtensionAPI) {
     }
 
     readyPromise = new Promise((resolve, reject) => {
-      if (!simpaRoot) {
-        reject(new Error("SIMPA project root not found. Set SIMPA_ROOT environment variable."));
+      if (!verifySimpaInstallation()) {
+        reject(new Error(
+          `SIMPA not found at ${SIMPA_ROOT}/simpa. ` +
+          `Please ensure simpa is installed in ~/.pi/simpa`
+        ));
         return;
       }
 
-      const env = { ...process.env, PYTHONPATH: simpaRoot };
+      // Use uv run from the ~/.pi directory
+      const env = { 
+        ...process.env, 
+        PYTHONPATH: SIMPA_ROOT,
+        UV_PYTHON: path.join(SIMPA_ROOT, ".venv", "bin", "python")
+      };
 
-      simpaProcess = spawn(PYTHON, ["-m", MODULE], {
+      simpaProcess = spawn("uv", ["run", "-m", MODULE], {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: simpaRoot,
+        cwd: SIMPA_ROOT,
         env,
       });
 
@@ -93,10 +91,10 @@ export default function (pi: ExtensionAPI) {
       simpaProcess.on("error", (err) => {
         ready = false;
         readyPromise = null;
-        reject(err);
+        reject(new Error(`Failed to start SIMPA: ${err.message}. Ensure 'uv' is installed.`));
       });
 
-      simpaProcess.on("exit", () => {
+      simpaProcess.on("exit", (code) => {
         ready = false;
         simpaProcess = null;
         readyPromise = null;
@@ -105,7 +103,7 @@ export default function (pi: ExtensionAPI) {
       // Timeout after 30 seconds
       setTimeout(() => {
         if (!ready) {
-          reject(new Error("Timeout waiting for SIMPA server to start"));
+          reject(new Error("Timeout waiting for SIMPA server to start (30s). Check logs."));
         }
       }, 30000);
     });
@@ -279,9 +277,13 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const result = await callMethod("list_projects", params);
-      const projects = result.projects.map((p: any) =>
-        "- " + p.project_name + " (" + (p.main_language || 'N/A') + ") - " + p.prompt_count + " prompts"
-      ).join('\n');
+      const projects = result.projects.map((p: any) => {
+        let line = "- " + p.project_name + " (" + (p.main_language || 'N/A') + ") - " + p.prompt_count + " prompts";
+        if (p.description) {
+          line += "\n  " + p.description;
+        }
+        return line;
+      }).join('\n');
 
       return {
         content: [{

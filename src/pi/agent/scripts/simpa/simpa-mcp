@@ -1,0 +1,169 @@
+#!/bin/bash
+# SIMPA-MCP Wrapper Script
+# Provides easy access to SIMPA-MCP functionality from Pi
+#
+# This script sets up the environment and delegates to Python scripts
+# for the actual SIMPA operations.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SIMPA_MCP_DIR="/home/dsidlo/workspace/simpa-mcp"
+LOG_FILE="/tmp/simpa-mcp-wrapper.log"
+
+# Set required environment variables from mcp.json
+# These match the values in ~/.pi/agent/mcp.json
+export DATABASE_URL="postgresql://dsidlo:rexrabbit@127.0.0.1:5432/simpa"
+export EMBEDDING_PROVIDER="ollama"
+export EMBEDDING_MODEL="nomic-embed-text:latest"
+export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+export LLM_MODEL="xai/grok-4-1-fast-non-reasoning"
+export PYTHONPATH="$SIMPA_MCP_DIR/src"
+
+# Show help
+show_help() {
+    cat << 'EOF'
+SIMPA-MCP Wrapper
+
+Usage: simpa-mcp <command> [options]
+
+Commands:
+  refine <prompt>       Refine a prompt using SIMPA
+  find-similar <text>   Find similar prompts
+  start                 Start the MCP server in the background
+  stop                  Stop the running MCP server
+  status                Check if MCP server is running
+  version               Show version info
+  help                  Show this help message
+
+Examples:
+  simpa-mcp refine "Create a Python function to..."
+  simpa-mcp find-similar "database connection"
+  simpa-mcp start
+  simpa-mcp status
+
+EOF
+}
+
+# Refine a prompt
+refine() {
+    local prompt="$1"
+    if [ -z "$prompt" ]; then
+        echo "Error: No prompt provided"
+        echo "Usage: simpa-mcp refine '<your prompt here>'"
+        exit 1
+    fi
+    
+    cd "$SIMPA_MCP_DIR"
+    _SIMPA_PROMPT="$prompt" uv run python "$SCRIPT_DIR/simpa-refine.py"
+}
+
+# Find similar prompts
+find_similar() {
+    local query="$1"
+    if [ -z "$query" ]; then
+        echo "Error: No query provided"
+        echo "Usage: simpa-mcp find-similar '<query text>'"
+        exit 1
+    fi
+    
+    cd "$SIMPA_MCP_DIR"
+    _SIMPA_QUERY="$query" uv run python "$SCRIPT_DIR/simpa-find-similar.py"
+}
+
+# Start MCP server
+start_server() {
+    if pgrep -f "simpa-mcp" > /dev/null 2>&1; then
+        echo "SIMPA-MCP server is already running"
+        return 0
+    fi
+    
+    echo "Starting SIMPA-MCP server..."
+    cd "$SIMPA_MCP_DIR"
+    
+    nohup uv run python src/main.py \
+        --log-level debug \
+        --log-file /tmp/simpa-mcp.log \
+        --project-id-required \
+        > /tmp/simpa-mcp.out 2>&1 &
+    
+    sleep 2
+    
+    if pgrep -f "simpa-mcp" > /dev/null 2>&1; then
+        echo "SIMPA-MCP server started successfully"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server started" >> "$LOG_FILE"
+    else
+        echo "Failed to start SIMPA-MCP server"
+        echo "Check /tmp/simpa-mcp.log for details"
+        exit 1
+    fi
+}
+
+# Stop MCP server
+stop_server() {
+    local pid
+    pid=$(pgrep -f "simpa-mcp" || true)
+    
+    if [ -n "$pid" ]; then
+        echo "Stopping SIMPA-MCP server (PID: $pid)..."
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        
+        if pgrep -f "simpa-mcp" > /dev/null 2>&1; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        
+        echo "SIMPA-MCP server stopped"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server stopped" >> "$LOG_FILE"
+    else
+        echo "SIMPA-MCP server is not running"
+    fi
+}
+
+# Check server status
+check_status() {
+    if pgrep -f "simpa-mcp" > /dev/null 2>&1; then
+        echo "SIMPA-MCP server: RUNNING"
+        echo "Log file: /tmp/simpa-mcp.log"
+        echo ""
+        echo "Last 5 log entries:"
+        tail -5 /tmp/simpa-mcp.log 2>/dev/null || echo "(No log entries yet)"
+    else
+        echo "SIMPA-MCP server: NOT RUNNING"
+    fi
+}
+
+# Show version
+show_version() {
+    echo "SIMPA-MCP Wrapper v1.0.0"
+    echo "SIMPA Directory: $SIMPA_MCP_DIR"
+    cd "$SIMPA_MCP_DIR"
+    uv run python --version
+}
+
+# Main command dispatcher
+case "${1:-help}" in
+    refine)
+        shift
+        refine "$*"
+        ;;
+    find-similar)
+        shift
+        find_similar "$*"
+        ;;
+    start)
+        start_server
+        ;;
+    stop)
+        stop_server
+        ;;
+    status)
+        check_status
+        ;;
+    version|--version|-v)
+        show_version
+        ;;
+    help|--help|-h|*)
+        show_help
+        ;;
+esac

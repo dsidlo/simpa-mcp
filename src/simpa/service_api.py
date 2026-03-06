@@ -564,6 +564,7 @@ async def list_projects(
                 project_summaries.append({
                     "project_id": str(project.id),
                     "project_name": project.project_name,
+                    "description": project.description,
                     "main_language": project.main_language,
                     "prompt_count": len(project.prompts) if project.prompts else 0,
                     "project_created_at": project.created_at.isoformat(),
